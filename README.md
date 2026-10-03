@@ -62,7 +62,7 @@ Create an API key at https://aistudio.google.com/apikey.
 | `ADSENSE_CLIENT` | no | `ca-pub-…` |
 | `ADSENSE_SLOTS` | no | JSON, e.g. `{"landing":"123","panel":"456","wide":"789","list":"012"}` |
 
-4. Redeploy. Every push to `main` deploys automatically.
+4. Deploy with `npm run deploy` (direct upload; it leaves out local test files in `public/_t`).
 
 ### Ads
 Ad slots: the landing page (`landing`), the step panel (`panel`, every 6th step), the parts list (`wide`) and My builds (`list`). There are no ads in the upload or sign-up flow.

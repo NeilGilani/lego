@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler pages dev",
-    "deploy": "wrangler pages deploy",
+    "deploy": "rm -rf .deploy && rsync -a --exclude _t public/ .deploy/ && wrangler pages deploy .deploy --project-name brixel --branch main",
     "test": "node scripts/check.mjs"
   },
   "devDependencies": {
