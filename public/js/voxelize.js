@@ -90,10 +90,16 @@ function reliefGrid(spec) {
   const base = baseplateFor(Math.max(r.w, fMax + bMax) + 2), W = base.size, H = r.h;
   const i0 = Math.floor((W - r.w) / 2), jc = Math.floor((W - (fMax + bMax)) / 2) + bMax;   // centred both ways
   const grid = Array.from({ length: H }, () => new Array(W * W).fill(null));
-  for (let z = 0; z < H; z++) for (let x = 0; x < r.w; x++) {
-    const k = z * r.w + x, col = r.color(k), f = r.front(k), b = r.back(k);
-    if (!col || f < 0) continue;
-    for (let j = jc - b; j < jc + f; j++) if (j >= 0 && j < W) grid[z][(i0 + x) * W + j] = col;
+  const seat = Math.max(3, Math.round(H * 0.15));
+  for (let x = 0; x < r.w; x++) {
+    let low = -1; for (let z = 0; z < H && low < 0; z++) if (r.color(z * r.w + x) && r.front(z * r.w + x) >= 0) low = z;
+    for (let z = 0; z < H; z++) {
+      // a small gap under the subject (e.g. a cropped-off base) is filled so the model sits on the ground
+      const src = low > 0 && low <= seat && z < low ? low : z;
+      const k = src * r.w + x, col = r.color(k), f = r.front(k), b = r.back(k);
+      if (!col || f < 0) continue;
+      for (let j = jc - b; j < jc + f; j++) if (j >= 0 && j < W) grid[z][(i0 + x) * W + j] = col;
+    }
   }
   return { grid, W, H, base };
 }
@@ -211,7 +217,7 @@ function applyFront(grid, W, H, f) {
 
 function addSupports(grid, W, H) {
   let added = 0;
-  for (let round = 0; round < 50; round++) {
+  for (let round = 0; round < 400; round++) {
     const seen = new Uint8Array(H * W * W), stack = [];
     for (let c = 0; c < W * W; c++) if (grid[0][c]) { seen[c] = 1; stack.push(c); }
     const flood = () => {
@@ -220,8 +226,9 @@ function addSupports(grid, W, H) {
         for (const [dz, di, dj] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
           const zz = z + dz, ii = i + di, jj = j + dj;
           if (zz < 0 || zz >= H || ii < 0 || jj < 0 || ii >= W || jj >= W) continue;
-          const n = zz * W * W + ii * W + jj;
-          if (!seen[n] && grid[zz][ii * W + jj]) { seen[n] = 1; stack.push(n); }
+          const n = zz * W * W + ii * W + jj, v = grid[zz][ii * W + jj];
+          // studs connect vertically; side by side only holds if one plate can span both (same colour)
+          if (!seen[n] && v && (dz !== 0 || v === grid[z][i * W + j])) { seen[n] = 1; stack.push(n); }
         }
       }
     };

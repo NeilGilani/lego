@@ -2,7 +2,7 @@ import { mountTopbar, getSession, openAuth, sb, savePending, loadPending, clearP
 import { startAds } from './ads.js';
 import { eiffelModel } from './eiffel.js';
 import { createViewer } from './viewer.js';
-import { estimateDepth, loadDepth } from './depth.js';
+import { estimateDepth, loadDepth, estimateMask, loadSegmenter } from './depth.js';
 import { buildRelief } from './relief.js';
 import { sanitizeSpec, voxelize } from './voxelize.js';
 
@@ -40,7 +40,7 @@ async function choose(file) {
   $('dropIdle').hidden = true; $('dropReady').hidden = false;
   $('buildBtn').disabled = false;
   $('buildBtn').focus();
-  loadDepth().catch(() => {});   // start the one-time model download early
+  loadDepth().catch(() => {}); loadSegmenter().catch(() => {});   // start the one-time model downloads early
 }
 $('file').onchange = e => choose(e.target.files[0]);
 const drop = $('drop');
@@ -74,7 +74,7 @@ $('buildBtn').onclick = async () => {
 })();
 
 // ---------------------------------------------------------------- generation (all in the browser)
-const STAGES = ['Uploading your photo', 'Loading the 3D vision model', 'Reading the depth of your photo', 'Building it in bricks', 'Saving your build'];
+const STAGES = ['Uploading your photo', 'Loading the vision models', 'Finding the subject and its 3D shape', 'Building it in bricks', 'Saving your build'];
 async function generate(session, ph) {
   const ov = document.createElement('div');
   ov.className = 'progress';
@@ -94,12 +94,17 @@ async function generate(session, ph) {
     }
     const naming = nameIt(ph.blob);   // optional, runs alongside
     stage(1);
-    const depth = await estimateDepth(ph.blob, (f, total) => stage(1, `${Math.round(f * 100)}% of ${(total / 1e6).toFixed(0)} MB (first time only)`));
+    // both models download in parallel (first visit only, ~70 MB total), then run on this device
+    const prog = {}; const report = key => (f, total) => { prog[key] = [f * total, total]; const l = Object.values(prog).reduce((a, [x]) => a + x, 0), t = Object.values(prog).reduce((a, [, y]) => a + y, 0); stage(1, `${Math.round(l / t * 100)}% of ${(t / 1e6).toFixed(0)} MB (first time only)`); };
+    await Promise.all([loadDepth(report('d')), loadSegmenter(report('s')).catch(() => null)]);
     stage(2);
+    // one after the other: two WebAssembly sessions at once is unreliable on some devices
+    const depth = await estimateDepth(ph.blob);
+    const alpha = await estimateMask(ph.blob);
     const photo = await pixels(ph.blob);
     stage(3);
     await new Promise(r => setTimeout(r, 30));
-    const spec = buildRelief(photo, depth, { width: SIZES[$('size').value] || 36 });
+    const spec = buildRelief(photo, depth, { width: SIZES[$('size').value] || 36, alpha });
     voxelize(sanitizeSpec(spec));                      // make sure it builds before saving
     Object.assign(spec, await naming);
     stage(4);

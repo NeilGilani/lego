@@ -4,10 +4,13 @@
 import { nearestColor, PHOTO_COLORS, cleanupColors } from './palette.js';
 
 const ALPHA = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+// bricks read darker than a lit photo, so brighten midtones a little before matching colours
+const lift = v => 255 * (v / 255) ** 0.92;
 
-// depth: { w, h, data } with 0..255, higher = closer. Returns a foreground mask (Uint8Array, w*h).
-export function segment(depth) {
-  const { w, h, data } = depth, n = w * h;
+// map: { w, h, data } with 0..255, higher = more "subject" (closer depth, or segmentation confidence).
+// Returns a foreground mask (Uint8Array, w*h). keepFrac keeps extra blobs at least this fraction of the largest.
+export function segment(map, { maxT = 255, keepFrac = 0 } = {}) {
+  const { w, h, data } = map, n = w * h;
   // Otsu threshold on the depth histogram: the subject is the near cluster
   const hist = new Float64Array(256); for (let k = 0; k < n; k++) hist[data[k]]++;
   let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
@@ -17,6 +20,7 @@ export function segment(depth) {
     sB += t * hist[t]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2;
     if (v > best) { best = v; T = t; }
   }
+  T = Math.min(T, maxT);
   let mask = new Uint8Array(n); for (let k = 0; k < n; k++) mask[k] = data[k] > T ? 1 : 0;
   // keep the largest connected blob
   const lab = new Int32Array(n), sizes = [0]; let id = 0;
@@ -30,8 +34,8 @@ export function segment(depth) {
     }
     sizes.push(size);
   }
-  const keep = sizes.indexOf(Math.max(...sizes));
-  for (let k = 0; k < n; k++) mask[k] = lab[k] === keep ? 1 : 0;
+  const biggest = Math.max(...sizes), keepIds = new Set(sizes.map((sz, i) => (sz === biggest || (keepFrac && sz >= biggest * keepFrac)) && i ? i : -1));
+  for (let k = 0; k < n; k++) mask[k] = keepIds.has(lab[k]) ? 1 : 0;
   // fill holes: anything not reachable from the border through background is subject
   const seen = new Uint8Array(n), st = [];
   for (let x = 0; x < w; x++) for (const y of [0, h - 1]) { const p = y * w + x; if (!mask[p] && !seen[p]) { seen[p] = 1; st.push(p); } }
@@ -47,9 +51,33 @@ export function segment(depth) {
 
 // photo: { data (RGBA), width, height }; depth as above (any resolution).
 // opts.width: model width in studs (default 36); opts.relief: depth strength (default 1).
+// opts.alpha: subject-segmentation confidence { w, h, data 0..255 } (ORMBG). When it finds a sensible subject it
+// decides what to build; depth then only shapes it. Without it, the nearest blob in the depth map is used.
 export function buildRelief(photo, depth, opts = {}) {
-  const mask = segment(depth);
   const dw = depth.w, dh = depth.h, PW = photo.width, PH = photo.height;
+  let mask = null;
+  if (opts.alpha) {
+    const a = opts.alpha, rs = new Uint8Array(dw * dh);
+    for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) rs[y * dw + x] = a.data[Math.min(a.h - 1, (y / dh * a.h) | 0) * a.w + Math.min(a.w - 1, (x / dw * a.w) | 0)];
+    // use depth to settle uncertain pixels: ones at the subject's own distance join it (plinths, bases);
+    // ones much nearer than the subject are foreground clutter (trees, people, railings)
+    const sure = []; for (let k = 0; k < rs.length; k += 3) if (rs[k] >= 170) sure.push(depth.data[k]);
+    if (sure.length > 50) {
+      sure.sort((x, y) => x - y);
+      const med = sure[sure.length >> 1], mad = sure.map(v => Math.abs(v - med)).sort((x, y) => x - y)[sure.length >> 1];
+      const tol = Math.max(10, 3 * mad);
+      for (let k = 0; k < rs.length; k++) {
+        const dd = depth.data[k] - med;
+        if (rs[k] >= 35 && Math.abs(dd) <= tol) rs[k] = Math.max(rs[k], 200);
+        else if (rs[k] < 170 && dd > tol * 1.5) rs[k] = Math.min(rs[k], 20);
+      }
+    }
+    // soft masks: cap the threshold so faint-but-real parts survive; keep sizeable separate parts
+    const m = segment({ w: dw, h: dh, data: rs }, { maxT: 110, keepFrac: 0.04 });
+    let cov = 0; for (const v of m) cov += v; cov /= m.length;
+    if (cov > 0.01 && cov < 0.95) mask = m;
+  }
+  mask ||= segment(depth);
   let bx0 = dw, bx1 = -1, by0 = dh, by1 = -1;
   for (let y = 0; y < dh; y++) for (let x = 0; x < dw; x++) if (mask[y * dw + x]) { bx0 = Math.min(bx0, x); bx1 = Math.max(bx1, x); by0 = Math.min(by0, y); by1 = Math.max(by1, y); }
   if (bx1 < 0) throw new Error('Couldn’t find a subject in that photo.');
@@ -60,6 +88,7 @@ export function buildRelief(photo, depth, opts = {}) {
   H = Math.max(6, H);
 
   const cells = Wm * H, filled = new Uint8Array(cells), dep = new Float32Array(cells), idx = new Int8Array(cells).fill(-1);
+  const R0 = new Float32Array(cells), G0 = new Float32Array(cells), B0 = new Float32Array(cells);
   const S = 4; // 4x4 samples per cell
   for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < Wm; cx++) {
     let cov = 0, ds = 0, r = 0, g = 0, b = 0;
@@ -73,15 +102,33 @@ export function buildRelief(photo, depth, opts = {}) {
     }
     const k = cy * Wm + cx;
     if (cov < S * S * 0.45) continue;
-    filled[k] = 1; dep[k] = ds / cov; idx[k] = nearestColor(r / cov, g / cov, b / cov);
+    filled[k] = 1; dep[k] = ds / cov; R0[k] = r / cov; G0[k] = g / cov; B0[k] = b / cov;
   }
-  cleanupColors(idx, Wm, H);
+  // even out broad lighting (shadowed sides, gradients) while keeping local detail, so a white wall in
+  // shade still reads as white: gain each cell toward the subject's average brightness
+  const Y = new Float32Array(cells); let mean = 0, nF = 0;
+  for (let k = 0; k < cells; k++) if (filled[k]) { Y[k] = 0.299 * R0[k] + 0.587 * G0[k] + 0.114 * B0[k]; mean += Y[k]; nF++; }
+  mean /= Math.max(1, nF);
+  const rad = Math.max(3, Math.round(Wm / 6)), radZ = Math.round(rad * 2.5);
+  for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < Wm; cx++) {
+    const k = cy * Wm + cx; if (!filled[k]) continue;
+    let sy = 0, n2 = 0;
+    for (let yy = Math.max(0, cy - radZ); yy <= Math.min(H - 1, cy + radZ); yy += 2) for (let xx = Math.max(0, cx - rad); xx <= Math.min(Wm - 1, cx + rad); xx++) {
+      const q = yy * Wm + xx; if (filled[q]) { sy += Y[q]; n2++; }
+    }
+    const broad = sy / n2, gain = Math.min(1.4, Math.max(0.8, (0.55 * mean + 0.45 * broad) / Math.max(8, broad)));
+    idx[k] = nearestColor(lift(R0[k] * gain), lift(G0[k] * gain), lift(B0[k] * gain));
+  }
+  cleanupColors(idx, Wm, H, 8);
 
   // depth -> 0..1 inside the subject (robust percentiles)
   const vals = []; for (let k = 0; k < cells; k++) if (filled[k]) vals.push(dep[k]);
   if (!vals.length) throw new Error('The subject is too small in that photo.');
   vals.sort((a, b) => a - b);
-  const lo = vals[Math.floor(vals.length * 0.05)], hi = vals[Math.floor(vals.length * 0.98)] || lo + 1;
+  const lo = vals[Math.floor(vals.length * 0.05)], hi = Math.max(lo + 1, vals[Math.floor(vals.length * 0.98)]);
+  // how much real depth the subject has: near objects (pets, products) vary a lot; distant buildings barely do,
+  // and for those the front should stay flat-ish instead of bulging
+  const relief3d = Math.min(1, Math.max(0, (hi - lo - 8) / 40));
 
   // distance to the silhouette edge, in studs (a plate is 0.4 studs tall)
   const dist = new Float32Array(cells).fill(1e9);
@@ -105,8 +152,9 @@ export function buildRelief(photo, depth, opts = {}) {
   for (let k = 0; k < cells; k++) {
     if (!filled[k]) { front += '.'; back += '.'; color += '.'; continue; }
     const dn = Math.min(1, Math.max(0, (dep[k] - lo) / (hi - lo))), pillow = Math.sqrt(Math.min(1, dist[k] / R));
-    const f = Math.max(1, Math.round(Dmax * (0.12 + 0.58 * dn + 0.30 * pillow)));
-    const bk = Math.max(1, Math.round(Dmax * 0.5 * (0.35 + 0.65 * pillow)));
+    const cap = 1 + dist[k] * 1.6;   // narrow parts (poles, legs, minarets) stay roughly round, not slabs
+    const f = Math.max(1, Math.round(Math.min(cap, Dmax * (0.12 + (0.25 + 0.33 * relief3d) * dn + (0.08 + 0.22 * relief3d) * pillow + 0.2 * (1 - relief3d)))));
+    const bk = Math.max(1, Math.round(Math.min(cap, Dmax * 0.5 * (0.35 + 0.65 * pillow))));
     front += ALPHA[Math.min(61, f)]; back += ALPHA[Math.min(61, bk)]; color += idx[k] >= 0 ? ALPHA[idx[k]] : '.';
   }
   return { kind: 'relief', w: Wm, h: H, front, back, color };
