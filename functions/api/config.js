@@ -12,5 +12,7 @@ export function onRequestGet({ env, request }) {
     adsenseClient: env.ADSENSE_CLIENT || '',
     adSlots,
     skipAuth: skipAuth(env, request),
+    // accounts are off unless ACCOUNTS=true: builds are then saved in the visitor's browser
+    accounts: env.ACCOUNTS === 'true' && !!env.SUPABASE_URL,
   }, { headers: { 'cache-control': 'no-cache' } });
 }

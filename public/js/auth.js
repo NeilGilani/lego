@@ -30,6 +30,11 @@ export async function mountTopbar(el) {
       <button data-auth="out" class="solid" data-signin>Sign in</button>
       <button data-auth="in" data-signout hidden>Sign out</button>
     </nav>`;
+  if (!(await getConfig()).accounts) {   // no accounts: builds live in this browser
+    el.querySelector('[data-auth=in]').hidden = false;
+    el.querySelectorAll('[data-signin],[data-signout]').forEach(n => n.remove());
+    return;
+  }
   const s = await getSession();
   el.querySelectorAll('[data-auth]').forEach(n => { n.hidden = (n.dataset.auth === 'in') !== !!s; });
   el.querySelector('[data-signin]').onclick = async () => { if (await openAuth()) location.reload(); };

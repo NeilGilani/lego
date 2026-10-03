@@ -29,15 +29,15 @@ const onStep = i => history.replaceState(null, '', '#' + (i + 1));
   const local = params.get('local');
   if (local) {
     let saved = null; try { saved = JSON.parse(localStorage.getItem('brixel-' + local)); } catch {}
-    if (!saved) return fail('This test build isn’t saved in this browser. <a href="/">Make one →</a>');
+    if (!saved) return fail('This build is saved in a different browser or device. <a href="/">Make one →</a>');
     let hb = null, showing = 'spec';
     const mount = which => {
       let model;
       try { model = voxelize(sanitizeSpec(saved[which])); } catch (e) { return fail('This design couldn’t be turned into bricks: ' + esc(e.message)); }
-      const label = which === 'draft' ? 'First draft' : saved.draft ? (saved.refined === false ? 'Draft (refinement failed)' : 'Refined') : 'Local test build';
+      const label = which === 'draft' ? 'First draft' : saved.draft ? (saved.refined === false ? 'Draft (refinement failed)' : 'Refined') : 'Saved in this browser';
       header(model.title, `${label} · ${(model.pieces.length + 1).toLocaleString()} parts · ${model.steps.length} steps${saved[which].kind === 'relief' ? '' : ` · ${saved[which].primitives.length} AI shapes`}`,
         `${saved.draft ? `<button class="btn" id="cmp">${which === 'draft' ? 'Show refined' : 'Show first draft'}</button>` : ''}<button class="btn" id="spec">Copy AI spec</button><a class="btn yellow" href="/">+ New build</a>`);
-      const about = `<div class="kicker">Local test build · ${label}</div><h2>${esc(model.title)}</h2>
+      const about = `<div class="kicker">${label}</div><h2>${esc(model.title)}</h2>
         <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">${saved.photo ? `<img class="about-photo" src="${saved.photo}" alt="Your photo">` : ''}
         <div style="flex:1;min-width:260px"><p style="margin-top:0">${esc(model.description)}</p>
         <div class="facts"><div class="fact"><b>${(model.pieces.length + 1).toLocaleString()}</b><span>parts</span></div><div class="fact"><b>${model.steps.length}</b><span>steps</span></div>

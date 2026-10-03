@@ -51,7 +51,8 @@ addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])][0
 
 $('buildBtn').onclick = async () => {
   if (!photo) return;
-  if ((await getConfig()).skipAuth) return generate(null, photo);   // local test mode (localhost only)
+  const cfg = await getConfig();
+  if (!cfg.accounts || cfg.skipAuth) return generate(null, photo);   // no accounts: save in this browser
   let session = await getSession();
   if (!session) {
     await savePending(photo.blob);
@@ -115,7 +116,7 @@ async function generate(session, ph) {
       location.href = `/build.html?id=${encodeURIComponent(data.id)}`;
       return;
     }
-    // local test mode: keep the build in this browser only
+    // no accounts: keep the build in this browser
     const key = 'local-' + Date.now().toString(36), rec = { spec, photo: await small(ph.blob) };
     try { localStorage.setItem('brixel-' + key, JSON.stringify(rec)); } catch { delete rec.photo; localStorage.setItem('brixel-' + key, JSON.stringify(rec)); }
     location.href = `/build.html?local=${key}`;

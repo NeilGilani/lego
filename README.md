@@ -58,7 +58,8 @@ Create an API key at https://aistudio.google.com/apikey.
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
 | `GEMINI_FALLBACK_MODELS` | no | Comma list tried when the main model is busy or over quota |
 | `BUILDS_PER_HOUR` | no | Per-user abuse guard, default `60`. Builds are otherwise unlimited. |
-| `GOOGLE_AUTH` | no | `true` shows "Continue with Google" |
+| `ACCOUNTS` | no | `true` turns on Supabase accounts. Off by default: no sign-up, and builds are saved in the visitor's browser |
+| `GOOGLE_AUTH` | no | `true` shows "Continue with Google" (accounts only) |
 | `ADSENSE_CLIENT` | no | `ca-pub-…` |
 | `ADSENSE_SLOTS` | no | JSON, e.g. `{"landing":"123","panel":"456","wide":"789","list":"012"}` |
 
