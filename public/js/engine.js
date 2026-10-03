@@ -1,17 +1,64 @@
 // Brick engine: voxel layers -> standard plates (seam-staggered), stud-connectivity
 // repair, and instruction steps. Shared by the Eiffel showcase and AI builds.
-import { PARTS, PLATE_SIZES } from './palette.js';
+import { PARTS, PLATE_SIZES, BRICK_SIZES, tileFor } from './palette.js';
 
 // grid: Array(H) of Array(W*W) colour keys (null = empty), indexed i*W + j
-// specials: [{ part, color, z, cells: [[i,j]...], x, y }] fixed parts; parts with no
-//           cells are centred off-grid and stack on the special before them.
-export function pack(grid, W, specials = []) {
+// specials: [{ part, color, z, cells: [[i,j]...], x, y, rot?, high? }] fixed parts; parts
+//           with no cells are centred off-grid and stack on the special before them.
+// opts.bricks: use 3-plate bricks where three matching layers line up
+// opts.tiles:  finish exposed tops with tiles (round 1x1 tiles for single-stud details)
+export function pack(grid, W, specials = [], opts = {}) {
   const H = grid.length;
   const pieces = [];
   const idGrid = Array.from({ length: H }, () => new Int32Array(W * W).fill(-1));
   for (const s of specials) {
     const p = PARTS[s.part];
     for (let dz = 0; dz < p.h; dz++) for (const [i, j] of s.cells) if (s.z + dz < H) grid[s.z + dz][i * W + j] = null;
+  }
+
+  // seam score: penalise seams that line up with the layer below, reward bridging pieces
+  const score = (below, i, j, w, d, preferX) => {
+    let seams = 0; const sup = new Set();
+    if (below) {
+      for (let di = 0; di < w; di++) for (let dj = 0; dj < d; dj++) { const b = below[(i + di) * W + j + dj]; if (b >= 0) sup.add(b); }
+      const edge = (p, q) => { const A = below[p], B = below[q]; return A >= 0 && B >= 0 && A !== B; };
+      for (let dj = 0; dj < d; dj++) {
+        if (i > 0) seams += edge((i - 1) * W + j + dj, i * W + j + dj);
+        if (i + w < W) seams += edge((i + w - 1) * W + j + dj, (i + w) * W + j + dj);
+      }
+      for (let di = 0; di < w; di++) {
+        if (j > 0) seams += edge((i + di) * W + j - 1, (i + di) * W + j);
+        if (j + d < W) seams += edge((i + di) * W + j + d - 1, (i + di) * W + j + d);
+      }
+    }
+    return w * d * 10 - seams * 12 + sup.size * 6 + ((preferX ? w >= d : d >= w) ? 0.5 : 0);
+  };
+
+  if (opts.bricks) {
+    for (let z = 0; z + 2 < H; z += 3) {
+      const same = c => { const v = grid[z][c]; return v && grid[z + 1][c] === v && grid[z + 2][c] === v && idGrid[z][c] < 0 && idGrid[z + 1][c] < 0 && idGrid[z + 2][c] < 0; };
+      const below = z > 0 ? idGrid[z - 1] : null, preferX = (z / 3) % 2 === 0;
+      for (let i = 0; i < W; i++) for (let j = 0; j < W; j++) {
+        const c0 = i * W + j; if (!same(c0)) continue;
+        const col = grid[z][c0];
+        let best = null;
+        for (const [s1, s2] of BRICK_SIZES) for (const [w, d] of (s1 === s2 ? [[s1, s2]] : [[s1, s2], [s2, s1]])) {
+          if (i + w > W || j + d > W) continue;
+          let ok = true;
+          for (let di = 0; di < w && ok; di++) for (let dj = 0; dj < d && ok; dj++) { const k = (i + di) * W + j + dj; if (!same(k) || grid[z][k] !== col) ok = false; }
+          if (!ok) continue;
+          const sc = score(below, i, j, w, d, preferX);
+          if (!best || sc > best.sc) best = { w, d, sc };
+        }
+        const cells = [];
+        for (let di = 0; di < best.w; di++) for (let dj = 0; dj < best.d; dj++) {
+          cells.push([i + di, j + dj]);
+          for (let dz = 0; dz < 3; dz++) idGrid[z + dz][(i + di) * W + j + dj] = pieces.length;
+        }
+        pieces.push({ part: 'B' + Math.min(best.w, best.d) + 'x' + Math.max(best.w, best.d), color: col, z, cells,
+          x: i + (best.w - 1) / 2, y: j + (best.d - 1) / 2, w: best.w, d: best.d });
+      }
+    }
   }
 
   for (let z = 0; z < H; z++) {
@@ -27,23 +74,8 @@ export function pack(grid, W, specials = []) {
           const k = (i + di) * W + j + dj; if (g[k] !== col || ids[k] >= 0) ok = false;
         }
         if (!ok) continue;
-        // penalise seams that line up with the layer below, reward bridging pieces
-        let seams = 0; const sup = new Set();
-        if (below) {
-          for (let di = 0; di < w; di++) for (let dj = 0; dj < d; dj++) { const b = below[(i + di) * W + j + dj]; if (b >= 0) sup.add(b); }
-          const edge = (p, q) => { const A = below[p], B = below[q]; return A >= 0 && B >= 0 && A !== B; };
-          for (let dj = 0; dj < d; dj++) {
-            if (i > 0) seams += edge((i - 1) * W + j + dj, i * W + j + dj);
-            if (i + w < W) seams += edge((i + w - 1) * W + j + dj, (i + w) * W + j + dj);
-          }
-          for (let di = 0; di < w; di++) {
-            if (j > 0) seams += edge((i + di) * W + j - 1, (i + di) * W + j);
-            if (j + d < W) seams += edge((i + di) * W + j + d - 1, (i + di) * W + j + d);
-          }
-        }
-        const orient = (preferX ? w >= d : d >= w) ? 0.5 : 0;
-        const score = w * d * 10 - seams * 12 + sup.size * 6 + orient;
-        if (!best || score > best.score) best = { w, d, score };
+        const sc = score(below, i, j, w, d, preferX);
+        if (!best || sc > best.sc) best = { w, d, sc };
       }
       const cells = [];
       for (let di = 0; di < best.w; di++) for (let dj = 0; dj < best.d; dj++) { cells.push([i + di, j + dj]); ids[(i + di) * W + j + dj] = pieces.length; }
@@ -56,7 +88,7 @@ export function pack(grid, W, specials = []) {
     const p = PARTS[s.part];
     for (let dz = 0; dz < p.h; dz++) for (const [i, j] of s.cells) if (s.z + dz < H) idGrid[s.z + dz][i * W + j] = pieces.length;
     if (!s.cells.length) chain.push(pieces.length);
-    pieces.push({ part: s.part, color: s.color, z: s.z, cells: s.cells, x: s.x, y: s.y, w: p.w, d: p.d, special: true });
+    pieces.push({ part: s.part, color: s.color, z: s.z, cells: s.cells, x: s.x, y: s.y, w: p.w, d: p.d, rot: s.rot || 0, high: s.high, special: true });
   }
   // off-grid stacks connect to the special placed just before them
   const chainLinks = chain.map(k => [k, k - 1]);
@@ -98,6 +130,20 @@ export function pack(grid, W, specials = []) {
     }
     if (!fixed) break;
     grounded = groundAll();
+  }
+  if (opts.tiles) {
+    // smooth finish: plates with nothing on top become tiles; lone single-stud details become round tiles
+    pieces.forEach((p, k) => {
+      if (!grounded[k] || PARTS[p.part].shape !== 'box' || PARTS[p.part].h !== 1 || !p.cells.length) return;
+      if (!p.cells.every(([i, j]) => p.z + 1 >= H || idGrid[p.z + 1][i * W + j] < 0)) return;
+      const t = tileFor(p.part); if (!t) return;
+      p.part = t;
+      if (t === 'T1x1') {
+        const [i, j] = p.cells[0];
+        const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => idGrid[p.z][(i + a) * W + j + b]).filter(n => n >= 0 && n !== k);
+        if (nb.length && nb.every(n => pieces[n].color !== p.color)) p.part = 'RTILE1';
+      }
+    });
   }
   const floating = pieces.filter((p, k) => !grounded[k]);
   const kept = pieces.filter((p, k) => grounded[k]).sort((A, B) => A.z - B.z);

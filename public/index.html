@@ -37,9 +37,13 @@
       </label>
       <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
         <button class="btn yellow" id="buildBtn" disabled style="padding:13px 22px;font-size:15px">Build it →</button>
+        <label class="btn" style="gap:6px;font-weight:600">Size
+          <select id="size" style="border:0;background:none;font:inherit;font-weight:700;cursor:pointer">
+            <option value="small">Small · 24 studs</option><option value="medium" selected>Medium · 36 studs</option><option value="large">Large · 46 studs</option>
+          </select></label>
         <a class="btn" href="/build.html?demo=eiffel">See an example</a>
       </div>
-      <div class="pill-row"><span>Free</span><span>Unlimited builds</span><span>Real, current parts</span><span>BrickLink parts export</span></div>
+      <div class="pill-row"><span>Free</span><span>Unlimited builds</span><span>Runs on your device</span><span>Real, current parts</span><span>BrickLink parts export</span></div>
     </div>
     <div class="showcase">
       <div class="stage-host" id="showcase"></div>
@@ -51,7 +55,7 @@
     <h2>How it works</h2>
     <div class="how">
       <div><b>1</b><h3>Upload a photo</h3><p>Anything with a clear subject: objects, animals, buildings, vehicles.</p></div>
-      <div><b>2</b><h3>AI designs the model</h3><p>Gemini breaks your subject into shapes and colours. Brixel's brick engine turns those into real plates, staggers the seams so the model holds together, and checks that every part connects.</p></div>
+      <div><b>2</b><h3>Your device sculpts it</h3><p>A depth-sensing AI model runs right in your browser. It cuts out the subject and reads its shape in 3D, and the colours come straight from your photo. Brixel's brick engine then builds it from bricks, slopes, tiles and plates and checks that every part connects.</p></div>
       <div><b>3</b><h3>Build it step by step</h3><p>A 3D view of every step, top-down plans for each layer, and a parts list you can upload to BrickLink.</p></div>
     </div>
     <div data-ad="landing" class="ad ad-wide"></div>
@@ -59,7 +63,7 @@
 </main>
 
 <footer>
-  Brixel is a free fan project. AI designs are approximations: they're always buildable, but not always perfect likenesses.
+  Brixel is a free fan project. Models are relief sculptures shaped from your photo: the front matches the photo, and the back is a smooth, rounded shape so the model can stand on its own.
   LEGO® is a trademark of the LEGO Group, which does not sponsor, authorise or endorse this site. Brixel models use standard parts compatible with LEGO® bricks.
 </footer>
 <script type="module" src="/js/landing.js"></script>

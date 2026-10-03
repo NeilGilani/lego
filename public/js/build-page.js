@@ -26,6 +26,32 @@ const onStep = i => history.replaceState(null, '', '#' + (i + 1));
     mountHandbook($('root'), model, { about: eiffelAbout(model), slot: adSlot, start: start(), onStep });
     return;
   }
+  const local = params.get('local');
+  if (local) {
+    let saved = null; try { saved = JSON.parse(localStorage.getItem('brixel-' + local)); } catch {}
+    if (!saved) return fail('This test build isn’t saved in this browser. <a href="/">Make one →</a>');
+    let hb = null, showing = 'spec';
+    const mount = which => {
+      let model;
+      try { model = voxelize(sanitizeSpec(saved[which])); } catch (e) { return fail('This design couldn’t be turned into bricks: ' + esc(e.message)); }
+      const label = which === 'draft' ? 'First draft' : saved.draft ? (saved.refined === false ? 'Draft (refinement failed)' : 'Refined') : 'Local test build';
+      header(model.title, `${label} · ${(model.pieces.length + 1).toLocaleString()} parts · ${model.steps.length} steps${saved[which].kind === 'relief' ? '' : ` · ${saved[which].primitives.length} AI shapes`}`,
+        `${saved.draft ? `<button class="btn" id="cmp">${which === 'draft' ? 'Show refined' : 'Show first draft'}</button>` : ''}<button class="btn" id="spec">Copy AI spec</button><a class="btn yellow" href="/">+ New build</a>`);
+      const about = `<div class="kicker">Local test build · ${label}</div><h2>${esc(model.title)}</h2>
+        <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start">${saved.photo ? `<img class="about-photo" src="${saved.photo}" alt="Your photo">` : ''}
+        <div style="flex:1;min-width:260px"><p style="margin-top:0">${esc(model.description)}</p>
+        <div class="facts"><div class="fact"><b>${(model.pieces.length + 1).toLocaleString()}</b><span>parts</span></div><div class="fact"><b>${model.steps.length}</b><span>steps</span></div>
+        <div class="fact"><b>${(model.H * 0.32).toFixed(1)} cm</b><span>tall on a ${model.baseplate.size}×${model.baseplate.size} baseplate</span></div>
+        ${saved[which].kind === 'relief' ? `<div class="fact"><b>${saved[which].w}×${saved[which].h}</b><span>studs × plates, sculpted from your photo's depth${model.supports ? ` · ${model.supports} support plates` : ''}</span></div>`
+          : `<div class="fact"><b>${saved[which].primitives.length}</b><span>shapes from the AI${model.supports ? ` · ${model.supports} support plates` : ''}</span></div>`}</div></div></div>`;
+      hb?.destroy();
+      hb = mountHandbook($('root'), model, { about, slot: adSlot, start: start(), onStep });
+      $('spec').onclick = async () => { await navigator.clipboard.writeText(JSON.stringify(saved[which], null, 2)); $('spec').textContent = 'Copied ✓'; };
+      $('cmp')?.addEventListener('click', () => { showing = showing === 'spec' ? 'draft' : 'spec'; mount(showing); });
+    };
+    mount('spec');
+    return;
+  }
   const id = params.get('id');
   if (!id) return fail('No build selected. <a href="/">Make one →</a>');
   let session = await getSession();
@@ -62,7 +88,7 @@ const onStep = i => history.replaceState(null, '', '#' + (i + 1));
         <div class="fact"><b>0</b><span>floating parts${model.supports ? `. ${model.supports} clear support plates hold up overhangs` : ''}</span></div>
       </div></div>
     </div>
-    <p style="margin-top:22px;font-size:13px">Designed by AI from your photo, then converted to standard parts by Brixel's brick engine. Every part connects to the baseplate through studs, but the likeness is an approximation.</p>`;
+    <p style="margin-top:22px;font-size:13px">${row.spec?.kind === 'relief' ? 'Sculpted from your photo: a depth-sensing AI model running in your browser read its 3D shape, and the colours come from the photo itself.' : 'Designed by AI from your photo.'} Brixel's brick engine converted it to standard parts, and every part connects to the baseplate through studs.</p>`;
   mountHandbook($('root'), model, { about, slot: adSlot, start: start(), onStep });
 
   $('share')?.addEventListener('click', async e => {

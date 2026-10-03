@@ -1,82 +1,17 @@
-// POST /api/generate  { image: base64, mimeType, imagePath }
-// Verifies the Supabase session, asks Gemini to design the model as primitives,
-// validates the result, and saves it to the user's builds.
-import { sanitizeSpec, SHAPES, LIMITS } from '../../public/js/voxelize.js';
-import { COLORS } from '../../public/js/palette.js';
+// POST /api/generate
+//   { image, mimeType, imagePath?, save? }                 -> first design from the photo
+//   { image, mimeType, previous, views: [b64...], save? }  -> refine a design against renders of it
+// Verifies the Supabase session, asks Gemini to design the model as primitives, validates
+// the result, and (when save is true and the user is signed in) saves it to their builds.
+import { sanitizeSpec } from '../../public/js/voxelize.js';
+import { designModel, providerOrder } from '../_lib/ai.js';
+import { skipAuth } from './config.js';
 
 const json = (body, status = 200) => Response.json(body, { status });
-
-const COLOR_GUIDE = Object.entries(COLORS).map(([k, c]) => `${k} (${c.name})`).join(', ');
-
-const PROMPT = `You are a master brick-model designer. Look at the photo, identify its main subject, and design a
-buildable brick model of it as a list of 3D primitives. A program voxelizes your primitives into 1x1 studs and
-plates and packs them into real parts, so you only describe shapes, sizes and colours.
-
-UNITS (important):
-- x and z are horizontal, in STUDS (1 stud = 8 mm). The model's centre line is x=0, z=0. x = left/right as seen
-  in the photo, z = depth (front is negative z).
-- y is vertical, in PLATES (1 plate = 3.2 mm). y=0 is the ground. A primitive's y is its BOTTOM.
-- 1 stud of width equals 2.5 plates of height. A cube 4 studs wide is w=4, d=4, h=10. A ball 10 studs across is
-  shape "sphere", w=10, d=10, h=25.
-- Keep the whole model within ${LIMITS.maxFootprint - 6} studs across and ${LIMITS.maxHeight - 20} plates tall. Small objects
-  (a mug, a shoe) should be about 12-20 studs across. Big subjects (buildings, vehicles, animals) can be 24-40 studs.
-
-SHAPES:
-- "box": w (x size), d (z size), h. Optional taper (0..1): top size as a fraction of the bottom (1 = straight,
-  0 = pyramid). Use it for frustums.
-- "cylinder": upright by default (axis "y"). w and d are the diameters and h is the height. taper 0 gives a cone.
-  axis "x" or "z" lays it on its side, running along w or d, with h as its vertical diameter (wheels, logs, barrels).
-- "sphere": an ellipsoid filling its w x d x h box (heads, bodies, round shapes).
-- "dome": the top half of an ellipsoid, flat side down at y, rising h (roofs, domes, backs).
-- "roof": a triangular prism with its ridge running along z, full width w at the bottom and a point at the top
-  (gable roofs, wedges, ears).
-- op "subtract" carves space out of earlier primitives (windows, doorways, arches, the inside of a mug). Later
-  primitives overwrite earlier ones, so add details after the bodies they sit on.
-
-COLOURS: use only these keys: ${COLOR_GUIDE}. Match the subject's real colours as closely as you can.
-
-RULES:
-- Every primitive must touch or overlap another one, and the model must rest on the ground at y=0. Floating
-  parts get ugly support columns.
-- Capture the overall silhouette and proportions first, then add recognisable details: eyes, windows, wheels,
-  stripes, logos as colour blocks. Use 12-80 primitives.
-- Overlap pieces by 1-2 studs or plates so they join solidly.
-- Don't add a base or ground plate; a baseplate is supplied.
-- Give each primitive a short, human name (for example "head", "left wheel", "roof"). The names become section
-  titles in the instructions.
-- title: a short name for the model (for example "Golden Retriever"). subject: what the photo shows, in a few
-  words. description: one or two friendly sentences about the model and its key features.
-If the photo has no clear subject, model the most prominent object in it.`;
-
-const SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    title: { type: 'STRING' },
-    subject: { type: 'STRING' },
-    description: { type: 'STRING' },
-    primitives: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          name: { type: 'STRING' },
-          shape: { type: 'STRING', enum: SHAPES },
-          op: { type: 'STRING', enum: ['add', 'subtract'] },
-          color: { type: 'STRING', enum: Object.keys(COLORS) },
-          x: { type: 'NUMBER' }, y: { type: 'NUMBER' }, z: { type: 'NUMBER' },
-          w: { type: 'NUMBER' }, d: { type: 'NUMBER' }, h: { type: 'NUMBER' },
-          taper: { type: 'NUMBER' },
-          axis: { type: 'STRING', enum: ['x', 'y', 'z'] },
-        },
-        required: ['name', 'shape', 'op', 'color', 'x', 'y', 'z', 'w', 'd', 'h'],
-      },
-    },
-  },
-  required: ['title', 'subject', 'description', 'primitives'],
-};
-
 export async function onRequestPost({ request, env }) {
-  if (!env.GEMINI_API_KEY || !env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) return json({ error: 'The server is missing its configuration.' }, 500);
+  const testMode = skipAuth(env, request);
+  if (!providerOrder(env).length || (!testMode && (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY))) return json({ error: 'The server is missing its configuration.' }, 500);
+  if (testMode) return design(request, env, null);
 
   // 1. who is this?
   const auth = request.headers.get('authorization') || '';
@@ -93,46 +28,57 @@ export async function onRequestPost({ request, env }) {
     { headers: { ...sbHeaders, prefer: 'count=exact', range: '0-0' } });
   const count = Number((recent.headers.get('content-range') || '').split('/')[1] || 0);
   if (count >= perHour) return json({ error: `You've made ${count} builds in the last hour. Take a breather and try again in a few minutes.` }, 429);
+  return design(request, env, { user, sbHeaders });
+}
 
-  // 3. the photo
+// local test mode passes ctx = null: no account, nothing saved, the spec is returned directly
+async function design(request, env, ctx) {
+  const user = ctx?.user;
   let body;
   try { body = await request.json(); } catch { return json({ error: 'Bad request.' }, 400); }
-  const { image, mimeType = 'image/jpeg', imagePath = null } = body || {};
+  const { image, mimeType = 'image/jpeg', imagePath = null, previous = null, views = null, save = true } = body || {};
   if (typeof image !== 'string' || image.length < 100) return json({ error: 'No image received.' }, 400);
   if (image.length > 8_000_000) return json({ error: 'That image is too large.' }, 413);
   if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(mimeType)) return json({ error: 'Unsupported image type.' }, 415);
-  if (imagePath && !String(imagePath).startsWith(user.id + '/')) return json({ error: 'Bad image path.' }, 400);
+  if (ctx && imagePath && !String(imagePath).startsWith(user.id + '/')) return json({ error: 'Bad image path.' }, 400);
+  const refining = previous && Array.isArray(views) && views.length;
+  if (refining && (views.length > 4 || views.some(v => typeof v !== 'string' || v.length > 3_000_000))) return json({ error: 'Bad renders.' }, 400);
 
-  // 4. design it
-  const model = env.GEMINI_MODEL || 'gemini-2.5-flash';
-  let spec = null, lastErr = '';
-  for (let attempt = 0; attempt < 2 && !spec; attempt++) {
-    const r = await fetch(`${env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: PROMPT }] },
-        contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data: image } }, { text: 'Design the brick model for this photo.' }] }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.4 },
-      }),
-    });
-    if (!r.ok) { lastErr = `Gemini error ${r.status}: ${(await r.text()).slice(0, 300)}`; if (r.status === 429 || r.status >= 500) continue; break; }
-    const out = await r.json();
-    const text = out?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-    try {
-      const s = sanitizeSpec(JSON.parse(text));
-      if (s.primitives.some(p => p.op === 'add')) spec = s; else lastErr = 'The design came back empty.';
-    } catch { lastErr = 'The design couldn’t be read.'; }
+  const parts = refining ? [
+    { text: 'ORIGINAL PHOTO:' }, { inlineData: { mimeType, data: image } },
+    { text: 'RENDERS OF YOUR CURRENT BRICK MODEL: front view (camera at positive z, same viewpoint as the photo), right side view (camera at positive x), and a 3/4 view from the front left:' },
+    ...views.map(v => ({ inlineData: { mimeType: 'image/jpeg', data: v } })),
+    { text: `YOUR CURRENT DESIGN:\n${JSON.stringify({ subjectBox: previous.subjectBox, outline: previous.outline, title: previous.title, subject: previous.subject, description: previous.description, primitives: previous.primitives })}\n\n` +
+      'Compare the renders with the photo the way a demanding art director would. In analysis.fixes, list every ' +
+      'difference: wrong proportions or silhouette, misplaced or missing parts, wrong colours, missing details, ' +
+      'parts that look squashed or stretched (remember 1 stud = 2.5 plates), and orientation mistakes. Then return the ' +
+      'COMPLETE improved design (all primitives, not just the changes), with every fix applied and more detail where ' +
+      'the model is plain. The renders already show the photo-projected front colours, so judge shape and silhouette ' +
+      'above all: the front view must line up with the photo. Keep what is already right.' },
+  ] : [
+    { inlineData: { mimeType, data: image } },
+    { text: 'Design a detailed, recognisable brick model of the main subject of this photo.' },
+  ];
+
+  // a previous design with no renders = just save it (the browser couldn't render views)
+  const saveOnly = previous && !refining;
+  let spec = null, used = '', lastErr = '';
+  if (!saveOnly) ({ spec, model: used, error: lastErr } = await designModel(env, parts, refining));
+  if (!spec && !saveOnly) {
+    console.error(lastErr);
+    if (!refining) return json({ error: 'The AI couldn’t design a model from that photo. It may be busy; try again in a moment.' }, 502);
   }
-  if (!spec) { console.error(lastErr); return json({ error: 'The AI couldn’t design a model from that photo. Try another photo, or try again.' }, 502); }
 
-  // 5. save (row-level security makes sure it lands in this user's account)
+  if (!spec) { spec = sanitizeSpec(previous); used = 'first draft'; }   // refinement failed: keep the draft
+  if (!ctx || !save) return json({ spec, model: used, refined: !!refining && used !== 'first draft' });
+
+  // save (row-level security makes sure it lands in this user's account)
   const ins = await fetch(`${env.SUPABASE_URL}/rest/v1/builds`, {
     method: 'POST',
-    headers: { ...sbHeaders, 'content-type': 'application/json', prefer: 'return=representation' },
-    body: JSON.stringify({ user_id: user.id, title: spec.title, subject: spec.subject, description: spec.description, spec, image_path: imagePath, model }),
+    headers: { ...ctx.sbHeaders, 'content-type': 'application/json', prefer: 'return=representation' },
+    body: JSON.stringify({ user_id: user.id, title: spec.title, subject: spec.subject, description: spec.description, spec, image_path: imagePath, model: used }),
   });
   if (!ins.ok) { console.error('insert failed', ins.status, await ins.text()); return json({ error: 'Your build couldn’t be saved. Please try again.' }, 500); }
   const [row] = await ins.json();
-  return json({ id: row.id });
+  return json({ id: row.id, spec });
 }

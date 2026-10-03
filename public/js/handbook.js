@@ -25,26 +25,34 @@ export function partSVG(partKey, colorKey) {
     const r = 0.3, [x0, y0] = P(x, y, z), [x1, y1] = P(x, y, z + 0.17), rx = r * C * Math.SQRT2, ry = r * S * Math.SQRT2;
     return `<path d="M${x0 - rx},${y0} A${rx},${ry} 0 0 0 ${x0 + rx},${y0} L${x1 + rx},${y1} A${rx},${ry} 0 0 1 ${x1 - rx},${y1} Z" fill="${left}" stroke="${stroke}" stroke-width=".03"/><ellipse cx="${x1}" cy="${y1}" rx="${rx}" ry="${ry}" fill="${top}" stroke="${stroke}" stroke-width=".03"/>`;
   };
-  if (def.shape === 'round') {
+  if (def.shape === 'slope') {
+    const lip = 0.08, poly = (arr, fill) => `<polygon points="${arr.map(q => q.join(',')).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width=".04" stroke-linejoin="round"/>`;
+    out.push(poly([P(0, d, 0), P(2, d, 0), P(2, d, lip), P(1, d, h), P(0, d, h)], left),
+      poly([P(2, 0, 0), P(2, d, 0), P(2, d, lip), P(2, 0, lip)], right),
+      poly([P(0, 0, h), P(1, 0, h), P(1, d, h), P(0, d, h)], top),
+      poly([P(1, 0, h), P(2, 0, lip), P(2, d, lip), P(1, d, h)], shade(hex, 1.05)));
+    pts.push(P(0, 0, h + 0.3), P(2, 0, 0), P(2, d, 0), P(0, d, 0), P(0, d, h));
+    for (let j = 0; j < d; j++) out.push(stud(0.5, j + 0.5, h));
+  } else if (def.shape === 'round') {
     const r = w / 2, ell = z => { const [x0, y0] = P(r, r, z); return { x0, y0, rx: r * C * Math.SQRT2, ry: r * S * Math.SQRT2 }; };
     const b = ell(0), t = ell(h);
     out.push(`<path d="M${b.x0 - b.rx},${b.y0} A${b.rx},${b.ry} 0 0 0 ${b.x0 + b.rx},${b.y0} L${t.x0 + t.rx},${t.y0} A${t.rx},${t.ry} 0 0 1 ${t.x0 - t.rx},${t.y0} Z" fill="${left}" stroke="${stroke}" stroke-width=".04"/>`,
       `<ellipse cx="${t.x0}" cy="${t.y0}" rx="${t.rx}" ry="${t.ry}" fill="${top}" stroke="${stroke}" stroke-width=".04"/>`);
     pts.push([b.x0 - b.rx, b.y0 + b.ry], [b.x0 + b.rx, t.y0 - t.ry - 0.3]);
-    for (const [a, c] of (w === 2 ? [[0.5, 0.5], [1.5, 0.5], [0.5, 1.5], [1.5, 1.5]] : [[0.5, 0.5]])) out.push(stud(a, c, h));
+    if (def.studs !== false) for (const [a, c] of (w === 2 ? [[0.5, 0.5], [1.5, 0.5], [0.5, 1.5], [1.5, 1.5]] : [[0.5, 0.5]])) out.push(stud(a, c, h));
   } else {
     const A = P(0, 0, h), B = P(w, 0, h), Cc = P(w, d, h), D = P(0, d, h), B0 = P(w, 0, 0), C0 = P(w, d, 0), D0 = P(0, d, 0);
     const poly = (arr, fill) => `<polygon points="${arr.map(q => q.join(',')).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width=".04" stroke-linejoin="round"/>`;
     out.push(poly([D, Cc, C0, D0], left), poly([B, Cc, C0, B0], right), poly([A, B, Cc, D], top));
     pts.push(A, B0, C0, D0, P(0, 0, h + 0.3), P(w, d, h + 0.3));
     if (def.shape === 'jumper') out.push(stud(1, 1, h));
-    else for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) out.push(stud(i + 0.5, j + 0.5, h));
+    else if (def.studs !== false) for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) out.push(stud(i + 0.5, j + 0.5, h));
   }
   const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
   const x0 = Math.min(...xs) - 0.15, y0 = Math.min(...ys) - 0.15;
   return `<svg viewBox="${x0} ${y0} ${Math.max(...xs) + 0.15 - x0} ${Math.max(...ys) + 0.15 - y0}" opacity="${col.trans ? 0.7 : 1}" aria-hidden="true">${out.join('')}</svg>`;
 }
-const partLabel = k => { const d = PARTS[k]; return d.shape === 'box' ? `${d.w}×${d.d}` : d.name.replace(/^(Plate|Brick), /, '').replace('Plate 2 x 2 with 1 Center Stud', 'Jumper 2×2'); };
+const partLabel = k => PARTS[k].name.replace('Plate 2 x 2 with 1 Center Stud', 'Jumper 2 x 2').replace(/^Plate (\d)/, '$1').replace('Slope 45', 'Slope 45°').replace(/ x /g, '×');
 
 // ---------------------------------------------------------------- handbook
 export function mountHandbook(root, model, opts = {}) {
@@ -123,7 +131,14 @@ export function mountHandbook(root, model, opts = {}) {
         const x0 = X(Math.min(...is)), y0 = X(Math.min(...js)), w = (Math.max(...is) - Math.min(...is) + 1) * cs, h = (Math.max(...js) - Math.min(...js) + 1) * cs;
         g.fillStyle = c.hex; g.fillRect(x0 + 1, y0 + 1, w - 2, h - 2);
         if (active) { g.strokeStyle = '#111'; g.lineWidth = 1.6; g.strokeRect(x0 + 1.5, y0 + 1.5, w - 3, h - 3); }
-        if (cs >= 9) { g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 1; for (const [i, j] of p.cells) { g.beginPath(); g.arc(X(i) + cs / 2, X(j) + cs / 2, cs * 0.28, 0, Math.PI * 2); g.stroke(); } }
+        const def = PARTS[p.part];
+        if (def.shape === 'slope') {
+          // arrow points downhill, from the stud row to the low edge
+          const [hi, hj] = p.high[0], [di, dj] = [[1, 0], [0, 1], [-1, 0], [0, -1]][p.rot || 0];
+          const ax = X(hi) + cs / 2, ay = X(hj) + cs / 2, bx = ax + di * cs, by = ay + dj * cs;
+          g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 2; g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
+          g.beginPath(); g.moveTo(bx, by); g.lineTo(bx - di * 5 - dj * 4, by - dj * 5 - di * 4); g.moveTo(bx, by); g.lineTo(bx - di * 5 + dj * 4, by - dj * 5 + di * 4); g.stroke();
+        } else if (cs >= 9 && def.studs !== false) { g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 1; for (const [i, j] of p.cells) { g.beginPath(); g.arc(X(i) + cs / 2, X(j) + cs / 2, cs * 0.28, 0, Math.PI * 2); g.stroke(); } }
       }
       g.globalAlpha = 1;
     };
@@ -160,7 +175,7 @@ export function mountHandbook(root, model, opts = {}) {
       ${note ? `<div class="tip">${note}</div>` : ''}
       <div class="callout">${t.map(x => `<div class="part">${partSVG(x.part, x.color)}<b>${x.n}×</b><span>${partLabel(x.part)}<br>${COLORS[x.color].name}</span></div>`).join('')}</div>
       <div class="plans">${zl.map(z => `<h4><span>Layer ${z + 1}</span><span class="mono">${heightOf(z)}</span></h4><canvas data-z="${z}"></canvas>`).join('')}
-        <div class="legend"><span><i style="background:#111"></i>new this step</span><span><i style="background:rgba(70,130,210,.3)"></i>layer below</span><span><i style="background:#999;opacity:.5"></i>placed earlier</span></div>
+        <div class="legend"><span><i style="background:#111"></i>new this step</span><span><i style="background:rgba(70,130,210,.3)"></i>layer below</span><span><i style="background:#999;opacity:.5"></i>placed earlier</span><span>→ slope runs downhill</span></div>
       </div>
       ${opts.slot && cur % 6 === 0 ? opts.slot('panel') : ''}`;
     panel.querySelectorAll('canvas').forEach(cv => drawPlan(cv, +cv.dataset.z));
@@ -180,7 +195,7 @@ export function mountHandbook(root, model, opts = {}) {
     opts.onStep?.(cur);
   }
 
-  root.addEventListener('click', e => {
+  const onClick = e => {
     const b = e.target.closest('[data-act],[data-tab]'); if (!b) return;
     if (b.dataset.tab) {
       root.querySelectorAll('.hb-tabs button').forEach(x => x.classList.toggle('on', x === b));
@@ -193,13 +208,15 @@ export function mountHandbook(root, model, opts = {}) {
     if (a === 'follow') { const v = !b.classList.contains('on'); b.classList.toggle('on', v); viewer.setFollow(v); }
     if (a === 'spin') { const v = !b.classList.contains('on'); b.classList.toggle('on', v); viewer.setSpin(v); }
     if (a === 'overview') { root.querySelector('[data-act=follow]').classList.remove('on'); viewer.setFollow(false); viewer.show(steps.length - 1, true); viewer.overview(); }
-  });
+ };
+  root.addEventListener('click', onClick);
   $('input[type=range]').addEventListener('input', e => go(+e.target.value));
-  addEventListener('keydown', e => {
+  const onKey = e => {
     if (!root.querySelector('[data-view=build].on') || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) && document.activeElement.type !== 'range') return;
     if (e.key === 'ArrowRight') { e.preventDefault(); go(cur + 1); }
     if (e.key === 'ArrowLeft') { e.preventDefault(); go(cur - 1); }
-  });
+  };
+  addEventListener('keydown', onKey);
 
   // parts tab
   { const all = tally(pieces), bp = model.baseplate;
@@ -237,5 +254,5 @@ export function mountHandbook(root, model, opts = {}) {
 
   go(opts.start || 0);
   viewer.frame(cur, true);
-  return { go, viewer, get step() { return cur; } };
+  return { go, viewer, get step() { return cur; }, destroy() { removeEventListener('keydown', onKey); root.removeEventListener('click', onClick); viewer.dispose(); } };
 }

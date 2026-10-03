@@ -1,7 +1,10 @@
-import { mountTopbar, getSession, openAuth, sb, savePending, loadPending, clearPending } from './auth.js';
+import { mountTopbar, getSession, openAuth, sb, savePending, loadPending, clearPending, getConfig } from './auth.js';
 import { startAds } from './ads.js';
 import { eiffelModel } from './eiffel.js';
 import { createViewer } from './viewer.js';
+import { estimateDepth, loadDepth } from './depth.js';
+import { buildRelief } from './relief.js';
+import { sanitizeSpec, voxelize } from './voxelize.js';
 
 const $ = id => document.getElementById(id);
 mountTopbar($('topbar'));
@@ -37,6 +40,7 @@ async function choose(file) {
   $('dropIdle').hidden = true; $('dropReady').hidden = false;
   $('buildBtn').disabled = false;
   $('buildBtn').focus();
+  loadDepth().catch(() => {});   // start the one-time model download early
 }
 $('file').onchange = e => choose(e.target.files[0]);
 const drop = $('drop');
@@ -47,6 +51,7 @@ addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])][0
 
 $('buildBtn').onclick = async () => {
   if (!photo) return;
+  if ((await getConfig()).skipAuth) return generate(null, photo);   // local test mode (localhost only)
   let session = await getSession();
   if (!session) {
     await savePending(photo.blob);
@@ -68,40 +73,82 @@ $('buildBtn').onclick = async () => {
   generate(session, { blob, url: URL.createObjectURL(blob) });
 })();
 
-// ---------------------------------------------------------------- generation
-const STAGES = ['Uploading your photo', 'Designing the model with Gemini', 'Saving your build'];
+// ---------------------------------------------------------------- generation (all in the browser)
+const STAGES = ['Uploading your photo', 'Loading the 3D vision model', 'Reading the depth of your photo', 'Building it in bricks', 'Saving your build'];
 async function generate(session, ph) {
   const ov = document.createElement('div');
   ov.className = 'progress';
   ov.innerHTML = `<div class="box"><img src="${ph.url}" alt=""><h2 style="margin:18px 0 0;letter-spacing:-.02em">Building your model…</h2>
-    <p style="color:var(--ink2);margin:6px 0 0">This usually takes 20 to 60 seconds.</p><ol>${STAGES.map(s => `<li>${s}</li>`).join('')}</ol><div class="err" hidden></div></div>`;
+    <p style="color:var(--ink2);margin:6px 0 0">Everything runs on your device: free, private, and no waiting in line.</p><ol>${STAGES.map(s => `<li>${s}</li>`).join('')}</ol><div class="err" hidden></div></div>`;
   document.body.appendChild(ov);
   const lis = ov.querySelectorAll('li');
-  const stage = i => lis.forEach((li, k) => { li.className = k < i ? 'done' : k === i ? 'on' : ''; });
+  const stage = (i, note) => lis.forEach((li, k) => { li.className = k < i ? 'done' : k === i ? 'on' : ''; li.textContent = STAGES[k] + (k === i && note ? ` · ${note}` : ''); });
   try {
     stage(0);
-    const client = await sb();
-    const path = `${session.user.id}/${crypto.randomUUID()}.jpg`;
-    const up = await client.storage.from('uploads').upload(path, ph.blob, { contentType: 'image/jpeg' });
-    if (up.error) throw new Error('Upload failed: ' + up.error.message);
+    let path = null, client = null;
+    if (session) {
+      client = await sb();
+      path = `${session.user.id}/${crypto.randomUUID()}.jpg`;
+      const up = await client.storage.from('uploads').upload(path, ph.blob, { contentType: 'image/jpeg' });
+      if (up.error) throw new Error('Upload failed: ' + up.error.message);
+    }
+    const naming = nameIt(ph.blob);   // optional, runs alongside
     stage(1);
-    const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(ph.blob); });
-    const tick = setTimeout(() => stage(2), 45000);
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ image: b64, mimeType: 'image/jpeg', imagePath: path }),
-    });
-    clearTimeout(tick);
-    const out = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(out.error || `The design service failed (${res.status}).`);
+    const depth = await estimateDepth(ph.blob, (f, total) => stage(1, `${Math.round(f * 100)}% of ${(total / 1e6).toFixed(0)} MB (first time only)`));
+    stage(2);
+    const photo = await pixels(ph.blob);
     stage(3);
+    await new Promise(r => setTimeout(r, 30));
+    const spec = buildRelief(photo, depth, { width: SIZES[$('size').value] || 36 });
+    voxelize(sanitizeSpec(spec));                      // make sure it builds before saving
+    Object.assign(spec, await naming);
+    stage(4);
     await clearPending();
-    location.href = `/build.html?id=${encodeURIComponent(out.id)}`;
+    if (session) {
+      const { data, error } = await client.from('builds').insert({ title: spec.title, subject: spec.subject, description: spec.description, spec, image_path: path, model: 'depth-anything-v2-small' }).select('id').single();
+      if (error) throw new Error('Saving failed: ' + error.message);
+      location.href = `/build.html?id=${encodeURIComponent(data.id)}`;
+      return;
+    }
+    // local test mode: keep the build in this browser only
+    const key = 'local-' + Date.now().toString(36), rec = { spec, photo: await small(ph.blob) };
+    try { localStorage.setItem('brixel-' + key, JSON.stringify(rec)); } catch { delete rec.photo; localStorage.setItem('brixel-' + key, JSON.stringify(rec)); }
+    location.href = `/build.html?local=${key}`;
   } catch (err) {
+    console.error(err);
     const e = ov.querySelector('.err');
     e.hidden = false;
     e.innerHTML = `${String(err.message || err).replace(/</g, '&lt;')}<br><br><button class="btn" onclick="this.closest('.progress').remove()">Close</button>`;
     lis.forEach(li => li.classList.remove('on'));
   }
 }
+const SIZES = { small: 24, medium: 36, large: 46 };
+
+// a short name for the build from a free, tiny AI call; falls back to "My build"
+async function nameIt(blob) {
+  const fallback = { title: 'My build', subject: '', description: '' };
+  try {
+    const img = await createImageBitmap(blob), s = Math.min(1, 384 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s;
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const image = c.toDataURL('image/jpeg', 0.8).split(',')[1];
+    const r = await fetch('/api/name', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image }), signal: AbortSignal.timeout(12000) });
+    return r.ok ? { ...fallback, ...(await r.json()) } : fallback;
+  } catch { return fallback; }
+}
+
+async function pixels(blob) {
+  const img = await createImageBitmap(blob), c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  return g.getImageData(0, 0, c.width, c.height);
+}
+
+// small thumbnail data URL for locally-kept test builds
+async function small(blob) {
+  const img = await createImageBitmap(blob), s = Math.min(1, 360 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s;
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.8);
+}
+

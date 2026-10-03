@@ -20,6 +20,7 @@ export function createViewer(host, model, opts = {}) {
   renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none';
 
   const scene = new THREE.Scene();
+  if (opts.background) scene.background = new THREE.Color(opts.background);
   const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 3000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
@@ -55,15 +56,26 @@ export function createViewer(host, model, opts = {}) {
   }
 
   // instanced parts, filled in step order so `mesh.count` reveals the build so far
-  const GEO = { box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 20), stud: new THREE.CylinderGeometry(0.3, 0.3, 0.17, 12) };
+  // 45° slope: runs downhill along local +x over 2 studs, unit width along z, base at y=0
+  const slopeGeo = (() => {
+    const H3 = 3 * PH - 0.012, sh = new THREE.Shape();
+    sh.moveTo(-1, 0); sh.lineTo(1, 0); sh.lineTo(1, 0.2); sh.lineTo(0, H3); sh.lineTo(-1, H3); sh.lineTo(-1, 0);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 1, bevelEnabled: false });
+    g.translate(0, 0, -0.5); g.computeVertexNormals();
+    return g;
+  })();
+  const GEO = { box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 20), stud: new THREE.CylinderGeometry(0.3, 0.3, 0.17, 12), slope: slopeGeo };
+  const ROT = [0, -Math.PI / 2, Math.PI, Math.PI / 2], yAxis = new THREE.Vector3(0, 1, 0);
   const q0 = new THREE.Quaternion(), vS = new THREE.Vector3(), vP = new THREE.Vector3();
   const pieceGeom = pieces.map(p => {
     const def = PARTS[p.part], trans = !!COLORS[p.color].trans, color = col3(p.color), tag = trans ? 'T' : 'O';
     const y0 = p.z * PH, h = def.h * PH, cx = sx(p.x), cz = sx(p.y), list = [];
-    const emit = (name, geo, px, py, pz, a, b, c) => list.push({ name: name + tag, geo, trans, color, m: new THREE.Matrix4().compose(vP.set(px, py, pz), q0, vS.set(a, b, c)) });
+    const emit = (name, geo, px, py, pz, a, b, c, q = q0) => list.push({ name: name + tag, geo, trans, color, m: new THREE.Matrix4().compose(vP.set(px, py, pz), q, vS.set(a, b, c)) });
     if (def.shape === 'round') emit('cyl', GEO.cyl, cx, y0 + h / 2, cz, def.w - 0.04, h - 0.01, def.d - 0.04);
+    else if (def.shape === 'slope') emit('slope', GEO.slope, cx, y0, cz, 0.98, 1, def.d - 0.04, new THREE.Quaternion().setFromAxisAngle(yAxis, ROT[p.rot || 0]));
     else emit('box', GEO.box, cx, y0 + h / 2, cz, p.w - 0.04, h - 0.012, p.d - 0.04);
-    const studAt = def.shape === 'jumper' || p.cells.length === 0 ? [[p.x, p.y]] : p.cells;
+    if (def.studs === false) return list;
+    const studAt = def.shape === 'slope' ? p.high : def.shape === 'jumper' || p.cells.length === 0 ? [[p.x, p.y]] : p.cells;
     for (const [i, j] of studAt) emit('stud', GEO.stud, sx(i), y0 + h + 0.085, sx(j), 1, 1, 1);
     return list;
   });
@@ -85,7 +97,7 @@ export function createViewer(host, model, opts = {}) {
   }
 
   const hiGroup = new THREE.Group(); scene.add(hiGroup);
-  const edgeBox = new THREE.EdgesGeometry(GEO.box), edgeCyl = new THREE.EdgesGeometry(GEO.cyl, 40);
+  const edgeBox = new THREE.EdgesGeometry(GEO.box), edgeCyl = new THREE.EdgesGeometry(GEO.cyl, 40), edgeSlope = new THREE.EdgesGeometry(GEO.slope);
   const edgeMat = new THREE.LineBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.85 });
   let hiMats = [];
 
@@ -105,7 +117,7 @@ export function createViewer(host, model, opts = {}) {
       const mat = new THREE.MeshStandardMaterial({ color: e.color, roughness: 0.4, transparent: e.trans, opacity: e.trans ? 0.6 : 1, emissive: 0xFFB000, emissiveIntensity: 0 });
       hiMats.push(mat);
       const mesh = new THREE.Mesh(e.geo, mat); mesh.applyMatrix4(e.m); mesh.castShadow = true; hiGroup.add(mesh);
-      if (!e.name.startsWith('stud')) { const ln = new THREE.LineSegments(e.name.startsWith('box') ? edgeBox : edgeCyl, edgeMat); ln.applyMatrix4(e.m); hiGroup.add(ln); }
+      if (!e.name.startsWith('stud')) { const ln = new THREE.LineSegments(e.name.startsWith('box') ? edgeBox : e.name.startsWith('slope') ? edgeSlope : edgeCyl, edgeMat); ln.applyMatrix4(e.m); hiGroup.add(ln); }
     }
   }
 
@@ -169,6 +181,29 @@ export function createViewer(host, model, opts = {}) {
     setFollow(v) { follow = v; if (v && opts.current) frame(opts.current()); },
     setSpin(v) { spin = v; },
     snapshot() { renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); },
+    // camera on a sphere around the whole model: theta from +z toward +x, phi = elevation
+    shot(theta, phi) {
+      overview();
+      const dist = camera.position.distanceTo(controls.target);
+      camera.position.copy(controls.target).add(new THREE.Vector3(Math.sin(theta) * Math.cos(phi), Math.sin(phi), Math.cos(theta) * Math.cos(phi)).multiplyScalar(dist));
+      camera.lookAt(controls.target);
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL('image/jpeg', 0.82);
+    },
     dispose() { cancelAnimationFrame(raf); ro.disconnect(); renderer.dispose(); host.removeChild(renderer.domElement); },
   };
+}
+
+// front / right side / 3/4 renders of a finished model, as base64 JPEGs (for the AI refinement pass)
+export async function renderViews(model, size = 640) {
+  const host = document.createElement('div');
+  host.style.cssText = `position:fixed;left:-${size * 3}px;top:0;width:${size}px;height:${size}px;background:#fff`;
+  document.body.appendChild(host);
+  const v = createViewer(host, model, { background: '#ffffff' });
+  v.setSpin(false); v.setFollow(false);
+  v.show(model.steps.length - 1, true);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const shots = [v.shot(0, 0.12), v.shot(Math.PI / 2, 0.12), v.shot(-Math.PI / 4, 0.45)].map(u => u.split(',')[1]);
+  v.dispose(); host.remove();
+  return shots;
 }

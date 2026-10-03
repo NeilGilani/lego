@@ -1,5 +1,8 @@
 // Public, non-secret settings for the browser. Secrets (GEMINI_API_KEY) never leave the server.
-export function onRequestGet({ env }) {
+// SKIP_AUTH only ever applies on localhost, so it can't disable sign-in in production.
+export const skipAuth = (env, request) => env.SKIP_AUTH === 'true' && ['localhost', '127.0.0.1'].includes(new URL(request.url).hostname);
+
+export function onRequestGet({ env, request }) {
   let adSlots = {};
   try { adSlots = JSON.parse(env.ADSENSE_SLOTS || '{}'); } catch {}
   return Response.json({
@@ -8,5 +11,6 @@ export function onRequestGet({ env }) {
     googleAuth: env.GOOGLE_AUTH === 'true',
     adsenseClient: env.ADSENSE_CLIENT || '',
     adSlots,
-  }, { headers: { 'cache-control': 'public, max-age=300' } });
+    skipAuth: skipAuth(env, request),
+  }, { headers: { 'cache-control': 'no-cache' } });
 }

@@ -5,22 +5,30 @@
 - **Frontend:** static HTML and ES modules with no build step (three.js and supabase-js from a CDN), in `public/`
 - **Backend:** Cloudflare Pages Functions in `functions/api/`
 - **Auth, database and storage:** Supabase
-- **AI:** Google Gemini (vision plus structured JSON output)
+- **AI:** Groq and/or Google Gemini (vision models, JSON output), with automatic fallback between them
 - **Revenue:** Google AdSense slots (optional)
 
 ## How it works
 
-1. The browser shrinks the photo to 1024 px or less and uploads it to the user's private folder in Supabase Storage.
-2. `POST /api/generate` checks the user's Supabase session and sends the photo to Gemini with a JSON schema. Gemini replies with the subject described as **primitives**: boxes, cylinders, spheres, domes, roofs, and subtractions, measured in studs and plates and coloured from a fixed brick palette. The function validates the result and saves it to `builds`.
-3. The build page rebuilds the model in the browser from that saved spec (`public/js/voxelize.js` → `engine.js`):
-   - it voxelizes the primitives onto a baseplate grid and hollows out the inside
-   - it adds clear support columns under anything that would float
-   - it packs every layer into standard plates, staggering seams against the layer below
-   - it checks stud connectivity and adds tie plates where needed
-   - it splits the result into steps
-4. `handbook.js` and `viewer.js` render the instructions.
+Building a model costs nothing and has no limits: the AI runs in the visitor's browser.
 
-The **Eiffel Tower showcase** (`/build.html?demo=eiffel`) is a hand-tuned 1:400 generator (`public/js/eiffel.js`) built from the real tower's dimensions. It runs on the same engine.
+1. The browser shrinks the photo to 1024 px or less. Signed-in users' photos go to their private folder in Supabase Storage.
+2. **Depth:** [Depth Anything V2 Small](https://huggingface.co/onnx-community/depth-anything-v2-small) (Apache-2.0) runs in the browser through transformers.js and WebAssembly (`public/js/depth.js`). The roughly 27 MB model downloads once and is cached.
+3. **Relief** (`public/js/relief.js`):
+   - it cuts out the subject using the depth map (Otsu threshold, largest blob, hole fill)
+   - it samples the subject onto a stud × plate grid
+   - it shapes each column's front from depth and rounds the edges using distance-to-edge, so the back is a smooth shell and the model stands on its own
+   - colours come from the photo's pixels, matched to real brick colours (at most 10, with speckle smoothing)
+4. **Bricks** (`public/js/voxelize.js` → `engine.js`):
+   - it hollows out the interior and adds clear supports under overhangs
+   - it builds from bricks, 45° slopes, plates, and tiles on exposed tops
+   - it staggers seams, checks stud connectivity, and splits the build into steps
+5. Only the compact relief data (about 10 KB) is saved, in the `builds` table. Every build page rebuilds the model from it.
+6. **Optional naming:** `POST /api/name` sends a 384 px thumbnail to Groq or Gemini for a title and a one-line description. That's a few dozen tokens, well inside free tiers. If it fails, the build is called "My build".
+
+`/api/generate` (Gemini or Groq designing the model as 3D shapes, with a render-and-refine second pass) is still in the code, but the site no longer uses it. It needs a paid AI tier to be reliable.
+
+The **Eiffel Tower showcase** (`/build.html?demo=eiffel`) is a hand-tuned 1:400 generator (`public/js/eiffel.js`) built from the real tower's dimensions, running on the same engine.
 
 ## Setup
 
@@ -41,10 +49,14 @@ Create an API key at https://aistudio.google.com/apikey.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | yes | Store it as a **Secret** |
+| `GROQ_API_KEY` | optional (naming only) | Groq (console.groq.com/keys). Store it as a **Secret** |
+| `GEMINI_API_KEY` | optional (naming only) | Google AI Studio. Store it as a **Secret** |
+| `AI_PROVIDERS` | no | Provider order, default `groq,gemini`. Providers without a key are skipped |
+| `GROQ_MODELS` | no | Groq vision model(s), comma list |
 | `SUPABASE_URL` | yes | `https://xxxx.supabase.co` |
 | `SUPABASE_ANON_KEY` | yes | The anon *public* key, which is safe to expose |
-| `GEMINI_MODEL` | no | Defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | no | Defaults to `gemini-3.8-flash` |
+| `GEMINI_FALLBACK_MODELS` | no | Comma list tried when the main model is busy or over quota |
 | `BUILDS_PER_HOUR` | no | Per-user abuse guard, default `60`. Builds are otherwise unlimited. |
 | `GOOGLE_AUTH` | no | `true` shows "Continue with Google" |
 | `ADSENSE_CLIENT` | no | `ca-pub-…` |

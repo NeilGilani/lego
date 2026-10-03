@@ -1,7 +1,9 @@
 # Copy to .dev.vars for local dev (npm run dev). In production, set these in
 # Cloudflare Pages → Settings → Variables and Secrets. Never commit real values.
 GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
+# tried in order when the main model is busy or over quota
+GEMINI_FALLBACK_MODELS=gemini-3.5-flash,gemini-flash-latest,gemini-3-flash-preview
 SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 SUPABASE_ANON_KEY=your-supabase-anon-public-key
 # optional
@@ -9,3 +11,11 @@ GOOGLE_AUTH=false
 BUILDS_PER_HOUR=60
 ADSENSE_CLIENT=
 ADSENSE_SLOTS={"landing":"","panel":"","wide":"","list":""}
+# local testing only: skip accounts (never applies outside localhost)
+SKIP_AUTH=false
+
+# --- AI providers: tried in this order; any provider without a key is skipped ---
+AI_PROVIDERS=groq,gemini
+GROQ_API_KEY=your-groq-api-key
+# vision model(s) on Groq, comma list tried in order
+GROQ_MODELS=qwen/qwen3.8-27b

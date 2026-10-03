@@ -58,9 +58,85 @@ for (const [k, id] of Object.entries(PLATE_IDS)) {
 }
 export const PLATE_SIZES = Object.keys(PLATE_IDS).map(k => k.split('x').map(Number));
 
+// bricks (3 plates tall)
+const BRICK_IDS = {
+  '1x1': '3005', '1x2': '3004', '1x3': '3622', '1x4': '3010', '1x6': '3009', '1x8': '3008',
+  '2x2': '3003', '2x3': '3002', '2x4': '3001', '2x6': '2456',
+};
+for (const [k, id] of Object.entries(BRICK_IDS)) {
+  const [a, b] = k.split('x').map(Number);
+  PARTS['B' + k] = { id, name: `Brick ${a} x ${b}`, w: a, d: b, h: 3, shape: 'box' };
+}
+export const BRICK_SIZES = Object.keys(BRICK_IDS).map(k => k.split('x').map(Number));
+
+// tiles (smooth, no studs) for exposed tops
+const TILE_IDS = {
+  '1x1': '3070b', '1x2': '3069b', '1x3': '63864', '1x4': '2431', '1x6': '6636', '1x8': '4162',
+  '2x2': '3068b', '2x4': '87079',
+};
+for (const [k, id] of Object.entries(TILE_IDS)) {
+  const [a, b] = k.split('x').map(Number);
+  PARTS['T' + k] = { id, name: `Tile ${a} x ${b}`, w: a, d: b, h: 1, shape: 'box', studs: false };
+}
+export const tileFor = plateKey => (PARTS['T' + plateKey.slice(1)] ? 'T' + plateKey.slice(1) : null);
+PARTS.RTILE1 = { id: '98138', name: 'Tile, Round 1 x 1', w: 1, d: 1, h: 1, shape: 'round', studs: false };
+
+// 45° slopes: w = run (downhill direction), d = width. Stud row on the high side only.
+PARTS.S2x1 = { id: '3040', name: 'Slope 45 2 x 1', w: 2, d: 1, h: 3, shape: 'slope' };
+PARTS.S2x2 = { id: '3039', name: 'Slope 45 2 x 2', w: 2, d: 2, h: 3, shape: 'slope' };
+
 export const BASEPLATES = [
   { size: 16, id: '3867', name: 'Baseplate 16 x 16' },
   { size: 32, id: '3811', name: 'Baseplate 32 x 32' },
   { size: 48, id: '4186', name: 'Baseplate 48 x 48' },
 ];
 export const baseplateFor = n => BASEPLATES.find(b => b.size >= n) || BASEPLATES[2];
+
+// ---------------------------------------------------------------- photo colour matching
+const srgbToLab = (r, g, b) => {
+  const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const R = lin(r), G = lin(g), B = lin(b);
+  const f = t => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  const X = f((R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047), Y = f(R * 0.2126 + G * 0.7152 + B * 0.0722), Z = f((R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883);
+  return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+};
+export const hexToLab = hex => { const n = parseInt(hex.slice(1), 16); return srgbToLab(n >> 16, (n >> 8) & 255, n & 255); };
+export const labDist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+// opaque, non-metallic colours a photo can be matched to; index order is stored in saved builds
+export const PHOTO_COLORS = Object.keys(COLORS).filter(k => !COLORS[k].trans && k !== 'GOLD' && k !== 'SILVER');
+const PHOTO_LAB = PHOTO_COLORS.map(k => hexToLab(COLORS[k].hex));
+export function nearestColor(r, g, b) {
+  const lab = srgbToLab(r, g, b);
+  let best = 0, bd = Infinity;
+  PHOTO_LAB.forEach((p, i) => { const d = labDist(lab, p); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+export { srgbToLab };
+
+// idx: Int8Array of PHOTO_COLORS indices (-1 = none) on a w x h grid. Keeps only the main colours
+// (like a real builder would), remaps stray shades to the nearest kept colour, then removes speckle.
+export function cleanupColors(idx, w, h, maxColors = 10) {
+  const counts = new Map(); let total = 0;
+  for (const v of idx) if (v >= 0) { counts.set(v, (counts.get(v) || 0) + 1); total++; }
+  const keep = [...counts].filter(([, n]) => n >= total * 0.015).sort((a, b) => b[1] - a[1]).slice(0, maxColors).map(([k]) => k);
+  if (keep.length) for (let k = 0; k < idx.length; k++) if (idx[k] >= 0 && !keep.includes(idx[k])) {
+    const L = PHOTO_LAB[idx[k]]; idx[k] = keep.reduce((b, c) => labDist(PHOTO_LAB[c], L) < labDist(PHOTO_LAB[b], L) ? c : b, keep[0]);
+  }
+  smooth(idx, w, h); smooth(idx, w, h);
+}
+
+function smooth(idx, w, h) {
+  const out = new Int8Array(idx);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (idx[y * w + x] < 0) continue;
+    const votes = new Map();
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const yy = y + dy, xx = x + dx; if (yy < 0 || xx < 0 || yy >= h || xx >= w) continue;
+      const v = idx[yy * w + xx]; if (v >= 0) votes.set(v, (votes.get(v) || 0) + (dx || dy ? 1 : 1.5));
+    }
+    let best = idx[y * w + x], bv = 0; for (const [k, v] of votes) if (v > bv) { bv = v; best = k; }
+    out[y * w + x] = best;
+  }
+  idx.set(out);
+}
+
