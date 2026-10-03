@@ -1,0 +1,13 @@
+{
+  "name": "brixel",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev",
+    "deploy": "wrangler pages deploy",
+    "test": "node scripts/check.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

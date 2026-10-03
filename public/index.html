@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brixel: turn any photo into a brick model</title>
+<meta name="description" content="Upload a photo of anything and get a buildable brick model with step-by-step instructions and a full parts list. Free and unlimited.">
+<meta property="og:title" content="Brixel: any photo, built in bricks">
+<meta property="og:description" content="Upload a photo and get step-by-step brick-building instructions and a parts list.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect width='9' height='9' rx='2' fill='%23D0222E'/><rect x='11' width='9' height='9' rx='2' fill='%23FFCF00'/><rect y='11' width='9' height='9' rx='2' fill='%231E6FD9'/><rect x='11' y='11' width='9' height='9' rx='2' fill='%231F9D55'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+
+<main>
+  <section class="hero">
+    <div>
+      <h1>Any photo.<br><em>Built in bricks.</em></h1>
+      <p class="lede">Upload a photo of anything: your dog, your car, your house, the mug on your desk. Brixel designs a brick model of it and gives you step-by-step instructions and a parts list you can order.</p>
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept="image/*">
+        <div id="dropIdle">
+          <div class="icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#3B2F00" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M6 10l6-6 6 6"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></div>
+          <div class="big">Drop a photo here, or click to choose one</div>
+          <div class="small">JPG, PNG, WebP or HEIC · one clear subject works best</div>
+        </div>
+        <div id="dropReady" class="preview" hidden>
+          <img id="previewImg" alt="Your photo">
+          <div><div class="big" style="margin:0">Ready to build</div><div class="small">Click <b>Build it</b>. You'll make a free account first.</div></div>
+        </div>
+      </label>
+      <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap">
+        <button class="btn yellow" id="buildBtn" disabled style="padding:13px 22px;font-size:15px">Build it →</button>
+        <a class="btn" href="/build.html?demo=eiffel">See an example</a>
+      </div>
+      <div class="pill-row"><span>Free</span><span>Unlimited builds</span><span>Real, current parts</span><span>BrickLink parts export</span></div>
+    </div>
+    <div class="showcase">
+      <div class="stage-host" id="showcase"></div>
+      <div class="cap"><div><b>Eiffel Tower · 1:400</b>2,796 parts · 164 steps · built from real survey heights</div><a class="btn primary" href="/build.html?demo=eiffel">Open →</a></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>How it works</h2>
+    <div class="how">
+      <div><b>1</b><h3>Upload a photo</h3><p>Anything with a clear subject: objects, animals, buildings, vehicles.</p></div>
+      <div><b>2</b><h3>AI designs the model</h3><p>Gemini breaks your subject into shapes and colours. Brixel's brick engine turns those into real plates, staggers the seams so the model holds together, and checks that every part connects.</p></div>
+      <div><b>3</b><h3>Build it step by step</h3><p>A 3D view of every step, top-down plans for each layer, and a parts list you can upload to BrickLink.</p></div>
+    </div>
+    <div data-ad="landing" class="ad ad-wide"></div>
+  </section>
+</main>
+
+<footer>
+  Brixel is a free fan project. AI designs are approximations: they're always buildable, but not always perfect likenesses.
+  LEGO® is a trademark of the LEGO Group, which does not sponsor, authorise or endorse this site. Brixel models use standard parts compatible with LEGO® bricks.
+</footer>
+<script type="module" src="/js/landing.js"></script>
+</body>
+</html>

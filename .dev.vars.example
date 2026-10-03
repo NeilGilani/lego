@@ -1,0 +1,11 @@
+# Copy to .dev.vars for local dev (npm run dev). In production, set these in
+# Cloudflare Pages → Settings → Variables and Secrets. Never commit real values.
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-2.5-flash
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_ANON_KEY=your-supabase-anon-public-key
+# optional
+GOOGLE_AUTH=false
+BUILDS_PER_HOUR=60
+ADSENSE_CLIENT=
+ADSENSE_SLOTS={"landing":"","panel":"","wide":"","list":""}

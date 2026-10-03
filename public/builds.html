@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My builds · Brixel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect width='9' height='9' rx='2' fill='%23D0222E'/><rect x='11' width='9' height='9' rx='2' fill='%23FFCF00'/><rect y='11' width='9' height='9' rx='2' fill='%231E6FD9'/><rect x='11' y='11' width='9' height='9' rx='2' fill='%231F9D55'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+<main class="section">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap"><h2 style="margin:0">My builds</h2><a class="btn yellow" href="/">+ New build</a></div>
+  <div data-ad="list" class="ad ad-wide"></div>
+  <div id="list" class="grid-builds" style="margin-top:18px"></div>
+</main>
+<script type="module" src="/js/builds-page.js"></script>
+</body>
+</html>

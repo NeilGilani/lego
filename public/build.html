@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build · Brixel</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect width='9' height='9' rx='2' fill='%23D0222E'/><rect x='11' width='9' height='9' rx='2' fill='%23FFCF00'/><rect y='11' width='9' height='9' rx='2' fill='%231E6FD9'/><rect x='11' y='11' width='9' height='9' rx='2' fill='%231F9D55'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+</head>
+<body>
+<header class="topbar" id="topbar"></header>
+<div class="hb-page">
+  <div class="hb-head" id="head" hidden>
+    <div><h1 id="title"></h1><div class="sub" id="sub"></div></div>
+    <div class="actions" id="actions"></div>
+  </div>
+  <div class="hb-root" id="root"><div class="center-msg" id="msg">Loading build…</div></div>
+</div>
+<script type="module" src="/js/build-page.js"></script>
+</body>
+</html>
