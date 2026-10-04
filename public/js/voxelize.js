@@ -244,6 +244,19 @@ function addSupports(grid, W, H) {
       if (cand !== null) best = { z, c: cand };
     }
     if (!best) break;
+    // measure the loose part: small bits are trimmed rather than propped up on a clear pole
+    const part = [], st2 = [best.z * W * W + best.c], seen2 = new Set(st2);
+    while (st2.length && part.length <= 60) {
+      const v = st2.pop(); part.push(v);
+      const z = Math.floor(v / (W * W)), c = v % (W * W), i = Math.floor(c / W), j = c % W;
+      for (const [dz, di, dj] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const zz = z + dz, ii = i + di, jj = j + dj;
+        if (zz < 0 || zz >= H || ii < 0 || jj < 0 || ii >= W || jj >= W) continue;
+        const n = zz * W * W + ii * W + jj;
+        if (!seen2.has(n) && !seen[n] && grid[zz][ii * W + jj]) { seen2.add(n); st2.push(n); }
+      }
+    }
+    if (part.length <= 60) { for (const v of part) grid[Math.floor(v / (W * W))][v % (W * W)] = null; continue; }
     for (let z = best.z - 1; z >= 0 && !grid[z][best.c]; z--) { grid[z][best.c] = 'TCLEAR'; added++; }
   }
   return added;

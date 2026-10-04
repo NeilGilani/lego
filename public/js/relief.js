@@ -191,6 +191,24 @@ export function buildRelief(photo, depth, opts = {}) {
     for (let y = 0; y < low; y++) { const q = y * Wm + x; F[q] = 1; D[q] = D[p]; Rr[q] = Rr[p]; Gg[q] = Gg[p]; Bb[q] = Bb[p]; }
   }
 
+  // ---- tidier silhouette: drop isolated specks and fill enclosed notches (3-stud x 5-plate window),
+  // gently enough that thin towers and poles survive
+  for (let pass = 0; pass < 2; pass++) {
+    const F2 = new Uint8Array(F);
+    for (let y = 0; y < H; y++) for (let x = 0; x < Wm; x++) {
+      let n = 0, t = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy < 0 || yy >= H || xx < 0 || xx >= Wm) continue; t++; n += F[yy * Wm + xx]; }
+      const k = y * Wm + x, on = F[k] ? n > 3 : n >= t - 3;
+      if (on && !F[k]) {   // filling a notch: borrow a neighbour's colour and depth
+        const q = [k - 1, k + 1, k - Wm, k + Wm].find(v => v >= 0 && v < N2 && F[v]);
+        if (q === undefined) continue;
+        D[k] = D[q]; Rr[k] = Rr[q]; Gg[k] = Gg[q]; Bb[k] = Bb[q];
+      }
+      F2[k] = on ? 1 : 0;
+    }
+    F.set(F2);
+  }
+
   // ---- colours: even out broad lighting (shadowed sides, gradients) while keeping local detail, so a
   // white wall in shade still reads as white; then match to brick colours
   const Y = new Float32Array(N2); let mean = 0, nF = 0;
@@ -207,10 +225,11 @@ export function buildRelief(photo, depth, opts = {}) {
       const q = yy * Wm + xx; if (F[q]) { sy += Y[q]; n2++; }
     }
     // only lift shadowed areas part-way toward the lit tone; never darken (that turned white marble grey)
-    const broad = sy / n2, gain = Math.min(1.5, Math.max(1, (0.5 * bright + 0.5 * broad) / Math.max(8, broad)));
+    // buildings (symmetric) are mostly one material, so their shadows are lifted much harder
+    const wB = sym ? 0.85 : 0.5, broad = sy / n2, gain = Math.min(sym ? 1.9 : 1.5, Math.max(1, (wB * bright + (1 - wB) * broad) / Math.max(8, broad)));
     idx[k] = nearestColor(lift(Rr[k] * gain), lift(Gg[k] * gain), lift(Bb[k] * gain));
   }
-  cleanupColors(idx, Wm, H, sym ? 6 : 8);
+  cleanupColors(idx, Wm, H, sym ? 5 : 7, sym ? 10 : 6);
 
   // ---- shape: each horizontal slice of the silhouette becomes a solid about as deep as it is wide.
   // Thin slices become slim towers, wide ones deep blocks, a dome's shrinking slices become a dome.

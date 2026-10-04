@@ -1,6 +1,12 @@
 // three.js step viewer for any brick model produced by engine.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { COLORS, PARTS } from './palette.js';
 
 const PH = 0.4; // plate height in stud units
@@ -10,7 +16,7 @@ export function createViewer(host, model, opts = {}) {
   const sx = v => v - W / 2 + 0.5;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -20,7 +26,7 @@ export function createViewer(host, model, opts = {}) {
   renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none';
 
   const scene = new THREE.Scene();
-  if (opts.background) scene.background = new THREE.Color(opts.background);
+  scene.background = new THREE.Color(opts.background || '#E7EDF3');
   const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 3000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
@@ -28,8 +34,11 @@ export function createViewer(host, model, opts = {}) {
   if (opts.showcase) { controls.enableZoom = false; controls.enablePan = false; }
 
   const topY = (pieces.reduce((m, p) => Math.max(m, p.z + PARTS[p.part].h), 0)) * PH;
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xB8C4D0, 1.4));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  // soft studio reflections make the bricks read as glossy ABS plastic
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xB8C4D0, 0.55));
+  const sun = new THREE.DirectionalLight(0xfff6ea, 2.4);
   sun.position.set(W * 1.2, topY + 80, W * 1.6); sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const ext = Math.max(W, topY) * 0.75;
@@ -39,8 +48,8 @@ export function createViewer(host, model, opts = {}) {
   const fill = new THREE.DirectionalLight(0xDDE8FF, 0.7); fill.position.set(-80, 40, -60); scene.add(fill);
 
   const col3 = key => new THREE.Color(COLORS[key].hex);
-  const matOpaque = new THREE.MeshStandardMaterial({ roughness: 0.42 });
-  const matTrans = new THREE.MeshStandardMaterial({ roughness: 0.1, transparent: true, opacity: 0.55, depthWrite: false });
+  const matOpaque = new THREE.MeshPhysicalMaterial({ roughness: 0.34, clearcoat: 0.35, clearcoatRoughness: 0.3, envMapIntensity: 0.55 });
+  const matTrans = new THREE.MeshPhysicalMaterial({ roughness: 0.08, transparent: true, opacity: 0.55, depthWrite: false, envMapIntensity: 0.8 });
 
   // baseplate
   {
@@ -64,8 +73,15 @@ export function createViewer(host, model, opts = {}) {
     g.translate(0, 0, -0.5); g.computeVertexNormals();
     return g;
   })();
-  const GEO = { box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 20), stud: new THREE.CylinderGeometry(0.3, 0.3, 0.17, 12), slope: slopeGeo };
+  const GEO = { box: new THREE.BoxGeometry(1, 1, 1), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 20), stud: new THREE.CylinderGeometry(0.3, 0.3, 0.17, 18), slope: slopeGeo };
   const ROT = [0, -Math.PI / 2, Math.PI, Math.PI / 2], yAxis = new THREE.Vector3(0, 1, 0);
+  // bricks with slightly rounded edges, one geometry per size so the rounding stays even
+  const boxGeos = new Map();
+  const boxGeo = (w, h, d) => {
+    const key = `${w}x${h.toFixed(3)}x${d}`;
+    if (!boxGeos.has(key)) boxGeos.set(key, new RoundedBoxGeometry(w - 0.04, h - 0.012, d - 0.04, 2, Math.min(0.05, h / 5)));
+    return boxGeos.get(key);
+  };
   const q0 = new THREE.Quaternion(), vS = new THREE.Vector3(), vP = new THREE.Vector3();
   const pieceGeom = pieces.map(p => {
     const def = PARTS[p.part], trans = !!COLORS[p.color].trans, color = col3(p.color), tag = trans ? 'T' : 'O';
@@ -73,7 +89,7 @@ export function createViewer(host, model, opts = {}) {
     const emit = (name, geo, px, py, pz, a, b, c, q = q0) => list.push({ name: name + tag, geo, trans, color, m: new THREE.Matrix4().compose(vP.set(px, py, pz), q, vS.set(a, b, c)) });
     if (def.shape === 'round') emit('cyl', GEO.cyl, cx, y0 + h / 2, cz, def.w - 0.04, h - 0.01, def.d - 0.04);
     else if (def.shape === 'slope') emit('slope', GEO.slope, cx, y0, cz, 0.98, 1, def.d - 0.04, new THREE.Quaternion().setFromAxisAngle(yAxis, ROT[p.rot || 0]));
-    else emit('box', GEO.box, cx, y0 + h / 2, cz, p.w - 0.04, h - 0.012, p.d - 0.04);
+    else { const g = boxGeo(p.w, h, p.d); emit('box' + g.uuid.slice(0, 8), g, cx, y0 + h / 2, cz, 1, 1, 1); list[list.length - 1].edge = new THREE.Matrix4().compose(vP.set(cx, y0 + h / 2, cz), q0, vS.set(p.w - 0.04, h - 0.012, p.d - 0.04)); }
     if (def.studs === false) return list;
     const studAt = def.shape === 'slope' ? p.high : def.shape === 'jumper' || p.cells.length === 0 ? [[p.x, p.y]] : p.cells;
     for (const [i, j] of studAt) emit('stud', GEO.stud, sx(i), y0 + h + 0.085, sx(j), 1, 1, 1);
@@ -114,10 +130,10 @@ export function createViewer(host, model, opts = {}) {
     hiGroup.clear(); hiMats.forEach(m => m.dispose()); hiMats = [];
     if (full) return;
     for (const k of steps[si].pieces) for (const e of pieceGeom[k]) {
-      const mat = new THREE.MeshStandardMaterial({ color: e.color, roughness: 0.4, transparent: e.trans, opacity: e.trans ? 0.6 : 1, emissive: 0xFFB000, emissiveIntensity: 0 });
+      const mat = new THREE.MeshPhysicalMaterial({ color: e.color, roughness: 0.34, clearcoat: 0.35, envMapIntensity: 0.55, transparent: e.trans, opacity: e.trans ? 0.6 : 1, emissive: 0xFFB000, emissiveIntensity: 0 });
       hiMats.push(mat);
       const mesh = new THREE.Mesh(e.geo, mat); mesh.applyMatrix4(e.m); mesh.castShadow = true; hiGroup.add(mesh);
-      if (!e.name.startsWith('stud')) { const ln = new THREE.LineSegments(e.name.startsWith('box') ? edgeBox : e.name.startsWith('slope') ? edgeSlope : edgeCyl, edgeMat); ln.applyMatrix4(e.m); hiGroup.add(ln); }
+      if (!e.name.startsWith('stud')) { const ln = new THREE.LineSegments(e.name.startsWith('box') ? edgeBox : e.name.startsWith('slope') ? edgeSlope : edgeCyl, edgeMat); ln.applyMatrix4(e.edge || e.m); hiGroup.add(ln); }
     }
   }
 
@@ -156,9 +172,19 @@ export function createViewer(host, model, opts = {}) {
   }
   controls.addEventListener('start', () => { goal.active = false; });
 
+  // ambient occlusion: soft contact shadows in the gaps between bricks
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const ao = new GTAOPass(scene, camera, 256, 256);
+  ao.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.3, thickness: 1.2, scale: 1, samples: 12 });
+  ao.blendIntensity = 0.85;
+  composer.addPass(ao);
+  composer.addPass(new OutputPass());
+  const draw = () => composer.render();
+
   function resize() {
     const w = host.clientWidth, h = host.clientHeight; if (!w || !h) return;
-    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false); composer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
   }
   const ro = new ResizeObserver(resize); ro.observe(host); resize();
 
@@ -171,7 +197,7 @@ export function createViewer(host, model, opts = {}) {
     if (goal.active && follow) { apply(Math.min(1, dt * 4)); if (controls.target.distanceTo(goal.target) < 0.05) goal.active = false; }
     if (spin) { const off = camera.position.clone().sub(controls.target); off.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 0.2); camera.position.copy(controls.target).add(off); }
     const pulse = 0.18 + 0.18 * Math.sin(t * 4); for (const m of hiMats) m.emissiveIntensity = pulse;
-    controls.update(); renderer.render(scene, camera);
+    controls.update(); draw();
   }
   camera.position.set(60, 60, 90);
   tick();
@@ -180,14 +206,14 @@ export function createViewer(host, model, opts = {}) {
     show, frame, overview,
     setFollow(v) { follow = v; if (v && opts.current) frame(opts.current()); },
     setSpin(v) { spin = v; },
-    snapshot() { renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); },
+    snapshot() { draw(); return renderer.domElement.toDataURL('image/jpeg', 0.85); },
     // camera on a sphere around the whole model: theta from +z toward +x, phi = elevation
     shot(theta, phi) {
       overview();
       const dist = camera.position.distanceTo(controls.target);
       camera.position.copy(controls.target).add(new THREE.Vector3(Math.sin(theta) * Math.cos(phi), Math.sin(phi), Math.cos(theta) * Math.cos(phi)).multiplyScalar(dist));
       camera.lookAt(controls.target);
-      renderer.render(scene, camera);
+      draw();
       return renderer.domElement.toDataURL('image/jpeg', 0.82);
     },
     dispose() { cancelAnimationFrame(raf); ro.disconnect(); renderer.dispose(); host.removeChild(renderer.domElement); },

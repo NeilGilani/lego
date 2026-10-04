@@ -115,7 +115,7 @@ export { srgbToLab };
 
 // idx: Int8Array of PHOTO_COLORS indices (-1 = none) on a w x h grid. Keeps only the main colours
 // (like a real builder would), remaps stray shades to the nearest kept colour, then removes speckle.
-export function cleanupColors(idx, w, h, maxColors = 10) {
+export function cleanupColors(idx, w, h, maxColors = 10, minIsland = 1) {
   const counts = new Map(); let total = 0;
   for (const v of idx) if (v >= 0) { counts.set(v, (counts.get(v) || 0) + 1); total++; }
   const keep = [...counts].filter(([, n]) => n >= total * 0.015).sort((a, b) => b[1] - a[1]).slice(0, maxColors).map(([k]) => k);
@@ -123,6 +123,36 @@ export function cleanupColors(idx, w, h, maxColors = 10) {
     const L = PHOTO_LAB[idx[k]]; idx[k] = keep.reduce((b, c) => labDist(PHOTO_LAB[c], L) < labDist(PHOTO_LAB[b], L) ? c : b, keep[0]);
   }
   smooth(idx, w, h); smooth(idx, w, h);
+  mergeIslands(idx, w, h, minIsland);
+}
+
+// colour regions smaller than minSize cells are absorbed by their most common neighbouring colour,
+// so models read as clean blocks of colour instead of speckle
+function mergeIslands(idx, w, h, minSize) {
+  if (minSize <= 1) return;
+  for (let pass = 0; pass < 3; pass++) {
+    const lab = new Int32Array(w * h).fill(-1); let changed = false;
+    for (let s0 = 0; s0 < w * h; s0++) {
+      if (idx[s0] < 0 || lab[s0] >= 0) continue;
+      const col = idx[s0], comp = [], st = [s0]; lab[s0] = s0;
+      const nb = new Map();
+      while (st.length) {
+        const p = st.pop(); comp.push(p); const x = p % w, y = (p - x) / w;
+        for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1]) {
+          if (q < 0 || idx[q] < 0) continue;
+          if (idx[q] === col) { if (lab[q] < 0) { lab[q] = s0; st.push(q); } }
+          else nb.set(idx[q], (nb.get(idx[q]) || 0) + 1);
+        }
+      }
+      if (comp.length >= minSize || !nb.size) continue;
+      let best = -1, bn = 0; for (const [c, n] of nb) if (n > bn) { bn = n; best = c; }
+      // keep small but striking details (eyes, pupils, markings): only absorb specks close in colour
+      if (labDist(PHOTO_LAB[col], PHOTO_LAB[best]) > 32) continue;
+      for (const p of comp) idx[p] = best;
+      changed = true;
+    }
+    if (!changed) break;
+  }
 }
 
 function smooth(idx, w, h) {
